@@ -1,0 +1,42 @@
+name: Build tweak
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  package:
+    runs-on: macos-latest
+    env:
+      THEOS: ${{ github.workspace }}/theos
+      THEOS_PACKAGE_SCHEME: rootless
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install make ldid fakeroot dpkg
+
+      - name: Set up Theos
+        run: |
+          git clone --depth=1 --recursive https://github.com/theos/theos.git "$THEOS"
+          mkdir -p "$THEOS/sdks"
+          curl -L -o "$THEOS/sdks/iPhoneOS16.4.sdk.tar.xz" https://github.com/theos/sdks/releases/download/ios16.4/iPhoneOS16.4.sdk.tar.xz
+          tar -xf "$THEOS/sdks/iPhoneOS16.4.sdk.tar.xz" -C "$THEOS/sdks"
+          rm "$THEOS/sdks/iPhoneOS16.4.sdk.tar.xz"
+
+      - name: Build rootless package
+        run: |
+          make clean package FINALPACKAGE=1
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: atria-packages
+          path: packages/*.deb
+          if-no-files-found: error
