@@ -26,9 +26,12 @@ jobs:
         run: |
           git clone --depth=1 --recursive https://github.com/theos/theos.git "$THEOS"
           mkdir -p "$THEOS/sdks"
-          curl -L -o "$THEOS/sdks/iPhoneOS16.4.sdk.tar.xz" https://github.com/theos/sdks/releases/download/ios16.4/iPhoneOS16.4.sdk.tar.xz
-          tar -xf "$THEOS/sdks/iPhoneOS16.4.sdk.tar.xz" -C "$THEOS/sdks"
-          rm "$THEOS/sdks/iPhoneOS16.4.sdk.tar.xz"
+          SDK_VERSION=16.5
+          SDK_ARCHIVE="iPhoneOS${SDK_VERSION}.sdk.tar.xz"
+          SDK_RELEASE_TAG=master-146e41f
+          curl -L -o "$THEOS/sdks/$SDK_ARCHIVE" "https://github.com/theos/sdks/releases/download/$SDK_RELEASE_TAG/$SDK_ARCHIVE"
+          tar -xf "$THEOS/sdks/$SDK_ARCHIVE" -C "$THEOS/sdks"
+          rm "$THEOS/sdks/$SDK_ARCHIVE"
 
       - name: Build rootless package
         run: |
