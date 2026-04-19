@@ -5,12 +5,13 @@
 
 #import <Preferences/PSListController.h>
 #import <Preferences/PSSpecifier.h>
+#import "../../Shared/ARISharedConstants.h"
 
-// RGB: 81, 8, 126
-#define kPrefTintColor [UIColor colorWithRed:0.32 green:0.03 blue:0.49 alpha:1.00]
-static NSString *const ARIPreferenceDomain = @"me.lau.AtriaPrefs";
+#define kPrefTintColor kARIPrefTintColor
 
 @interface ARIListController : PSListController
+- (NSString *)atriaPathForResource:(NSString *)name ofType:(NSString *)ext inDirectory:(NSString *)directory;
+- (void)atriaResolveIconPathsForSpecifiers:(NSArray<PSSpecifier *> *)specifiers;
 - (void)promptRespring:(id)sender;
 - (void)respringWithAnimation;
 @end

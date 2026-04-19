@@ -7,6 +7,7 @@
 #import "ARIEditManager.h"
 
 #import "../Hooks/Shared.h"
+#import "../../Shared/ARIPathUtils.h"
 
 #import <objc/runtime.h>
 
@@ -19,6 +20,7 @@
     NSUInteger _firmwareVersion;
     BOOL _deviceIPad;
     BOOL _shyLabelsInstalled;
+    BOOL _griddyInstalled;
 }
 
 @synthesize enabled = _enabled;
@@ -26,6 +28,7 @@
 @synthesize firmwareVersion = _firmwareVersion;
 @synthesize deviceIPad = _deviceIPad;
 @synthesize shyLabelsInstalled = _shyLabelsInstalled;
+@synthesize griddyInstalled = _griddyInstalled;
 @synthesize listViewModelMap = _listViewModelMap;
 
 // Shared instance and init methods
@@ -38,7 +41,9 @@
         _firmwareVersion = [[[device systemVersion] componentsSeparatedByString:@"."][0] integerValue];
         _deviceIPad = [[device model] hasPrefix:@"iPad"];
         // ShyLabels compatibility
-        _shyLabelsInstalled = [[NSFileManager defaultManager] fileExistsAtPath:@THEOS_PACKAGE_INSTALL_PREFIX "/Library/MobileSubstrate/DynamicLibraries/ShyLabels.dylib"];
+        _shyLabelsInstalled = ARIMobileSubstrateDylibPath(@"ShyLabels") != nil;
+        // Griddy compatibility
+        _griddyInstalled = ARIMobileSubstrateDylibPath(@"Griddy") != nil;
         // NSUserDefaults to get what values the user set
         _preferences = [[NSUserDefaults alloc] initWithSuiteName:@"me.lau.AtriaPrefs"];
         _enabled = [_preferences objectForKey:@"enabled"] ? [[_preferences objectForKey:@"enabled"] boolValue] : YES;
@@ -68,7 +73,37 @@
                    upperLimit:0];
         [self _registerOption:@"labelText"
                   translation:nil
-                 defaultValue:@"\%GREETING\%, user"
+                 defaultValue:@"\%인삿말_한\%."
+                   lowerLimit:0
+                   upperLimit:0];
+        [self _registerOption:@"labelScriptEnabled"
+                  translation:nil
+                 defaultValue:@(NO)
+                   lowerLimit:0
+                   upperLimit:0];
+        [self _registerOption:@"labelScriptSource"
+                  translation:nil
+                 defaultValue:@""
+                   lowerLimit:0
+                   upperLimit:0];
+        [self _registerOption:@"customGreetingMorningStartHour"
+                  translation:nil
+                 defaultValue:@(4)
+                   lowerLimit:0
+                   upperLimit:0];
+        [self _registerOption:@"customGreetingAfternoonStartHour"
+                  translation:nil
+                 defaultValue:@(12)
+                   lowerLimit:0
+                   upperLimit:0];
+        [self _registerOption:@"customGreetingEveningStartHour"
+                  translation:nil
+                 defaultValue:@(18)
+                   lowerLimit:0
+                   upperLimit:0];
+        [self _registerOption:@"customGreetingTokensSource"
+                  translation:nil
+                 defaultValue:@""
                    lowerLimit:0
                    upperLimit:0];
         [self _registerOption:@"labelTextColor"
@@ -139,72 +174,72 @@
 
         // Homescreen
         [self _registerOption:@"hs_rows"
-                  translation:@"Rows"
+                  translation:@"행"
                  defaultValue:@(6)
                    lowerLimit:2.0F
                    upperLimit:20.0F];
         [self _registerOption:@"hs_columns"
-                  translation:@"Columns"
+                  translation:@"열"
                  defaultValue:@(4)
                    lowerLimit:2.0F
                    upperLimit:20.0F];
         [self _registerOption:@"hs_iconScale"
-                  translation:@"Icon Scale"
+                  translation:@"아이콘 크기"
                  defaultValue:@(1.0)
                    lowerLimit:0.01F
                    upperLimit:2.0F];
         [self _registerOption:@"hs_widgetIconScale"
-                  translation:@"Widget Scale"
+                  translation:@"위젯 크기"
                  defaultValue:@(1.0)
                    lowerLimit:0.01F
                    upperLimit:3.0F];
         [self _registerOption:@"hs_spacing_x"
-                  translation:@"Icon Spacing X"
+                  translation:@"아이콘 간격 X"
                  defaultValue:@(0)
                    lowerLimit:-100.0F
                    upperLimit:100.0F];
         [self _registerOption:@"hs_spacing_y"
-                  translation:@"Icon Spacing Y"
+                  translation:@"아이콘 간격 Y"
                  defaultValue:@(0)
                    lowerLimit:-100.0F
                    upperLimit:100.0F];
         [self _registerOption:@"hs_inset_top"
-                  translation:@"Top Inset"
+                  translation:@"상단 여백"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"hs_inset_left"
-                  translation:@"Left Inset"
+                  translation:@"왼쪽 여백"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"hs_inset_bottom"
-                  translation:@"Bottom Inset"
+                  translation:@"아래 여백"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"hs_inset_right"
-                  translation:@"Right Inset"
+                  translation:@"오른쪽 여백"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"hs_offset_top"
-                  translation:@"Page Top Offset"
+                  translation:@"페이지 상단 오프셋"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"hs_offset_left"
-                  translation:@"Page Left Offset"
+                  translation:@"페이지 왼쪽 오프셋"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"hs_widgetXOffset"
-                  translation:@"Widget X Offset"
+                  translation:@"위젯 X 오프셋"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"hs_widgetYOffset"
-                  translation:@"Widget Y Offset"
+                  translation:@"위젯 Y 오프셋"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
@@ -213,119 +248,119 @@
         // For some reason, on iOS 15 only (not 13-14 or 16+), calling +isFloatingDockSupported leads to a respring loop.
         // Once SpringBoard launches, this option will be re-registered to adjust the default value if floating dock is enabled.
         [self _registerOption:@"dock_columns"
-                  translation:@"Columns"
+                  translation:@"열"
                  defaultValue:@(4)
                    lowerLimit:2.0F
                    upperLimit:20.0F];
         [self _registerOption:@"dock_rows"
-                  translation:@"Rows"
+                  translation:@"행"
                  defaultValue:@(1)
                    lowerLimit:1.0F
                    upperLimit:5.0F];
         [self _registerOption:@"dock_iconScale"
-                  translation:@"Icon Scale"
+                  translation:@"아이콘 크기"
                  defaultValue:@(1)
                    lowerLimit:0.01F
                    upperLimit:2.0F];
         [self _registerOption:@"dock_bg"
-                  translation:@"Background Alpha"
+                  translation:@"배경 투명도"
                  defaultValue:@(1)
                    lowerLimit:0.0F
                    upperLimit:1.0F];
         [self _registerOption:@"dock_spacing_x"
-                  translation:@"Icon Spacing X"
+                  translation:@"아이콘 간격 X"
                  defaultValue:@(0)
                    lowerLimit:-100.0F
                    upperLimit:100.0F];
         [self _registerOption:@"dock_spacing_y"
-                  translation:@"Icon Spacing Y"
+                  translation:@"아이콘 간격 Y"
                  defaultValue:@(0)
                    lowerLimit:-100.0F
                    upperLimit:100.0F];
         [self _registerOption:@"dock_inset_top"
-                  translation:@"Top Inset"
+                  translation:@"상단 여백"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"dock_inset_left"
-                  translation:@"Left Inset"
+                  translation:@"왼쪽 여백"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"dock_inset_bottom"
-                  translation:@"Bottom Inset"
+                  translation:@"아레 여백"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"dock_inset_right"
-                  translation:@"Right Inset"
+                  translation:@"오른쪽 여백"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
 
         // Page labels
         [self _registerOption:@"label_textSize"
-                  translation:@"Text Size"
+                  translation:@"글자 크기"
                  defaultValue:@(27)
                    lowerLimit:1.0F
                    upperLimit:60.0F];
         [self _registerOption:@"label_inset_left"
-                  translation:@"Side Inset"
+                  translation:@"측면 여백"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"label_inset_top"
-                  translation:@"Vertical Inset"
+                  translation:@"세로 여백"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
 
         // Blur background
         [self _registerOption:@"blur_alpha"
-                  translation:@"Background Alpha"
+                  translation:@"배경 투명도"
                  defaultValue:@(1)
                    lowerLimit:0.0F
                    upperLimit:1.0F];
         [self _registerOption:@"blur_corner_radius"
-                  translation:@"Corner Radius"
+                  translation:@"모서리 반경"
                  defaultValue:@(14)
                    lowerLimit:0.0F
                    upperLimit:100.0F];
         [self _registerOption:@"blur_intensity"
-                  translation:@"Tint Intensity"
+                  translation:@"틴트 강도"
                  defaultValue:@(0.5F)
                    lowerLimit:0.0F
                    upperLimit:1.0F];
 
         [self _registerOption:@"blur_inset_top"
-                  translation:@"Top Position"
+                  translation:@"상단 위치"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"blur_inset_left"
-                  translation:@"Left Position"
+                  translation:@"왼쪽 위치"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"blur_inset_bottom"
-                  translation:@"Bottom Position"
+                  translation:@"하단 위치"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
         [self _registerOption:@"blur_inset_right"
-                  translation:@"Right Position"
+                  translation:@"오른쪽 위치"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
 
         // Page dots
         [self _registerOption:@"pagedot_offsetX"
-                  translation:@"Dot X Offset"
+                  translation:@"X 오프셋"
                  defaultValue:@(0)
                    lowerLimit:-150.0F
                    upperLimit:150.0F];
         [self _registerOption:@"pagedot_offsetY"
-                  translation:@"Dot Y Offset"
+                  translation:@"Y 오프셋"
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];

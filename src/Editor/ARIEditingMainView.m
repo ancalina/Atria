@@ -70,7 +70,7 @@
 
         // Label
         UILabel *currentSettingLabel = [UILabel new];
-        currentSettingLabel.text = @"Choose a setting";
+        currentSettingLabel.text = @"설정을 선택하세요";
         currentSettingLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightSemibold];
         currentSettingLabel.textAlignment = NSTextAlignmentCenter;
         currentSettingLabel.numberOfLines = 1;
@@ -329,8 +329,8 @@
 
     if(_heightAnchor.constant == [self getBaseHeight]) {
         // Activate
-        [self.currentSettingLabel setText:@"Choose a setting"];
-        [_instructions setText:@"Click the page icon to edit this page only"];
+        [self.currentSettingLabel setText:@"설정을 선택하세요"];
+        [_instructions setText:@"이 페이지만 편집하려면 왼쪽 위 페이지 아이콘을 클릭하세요."];
 
         if(self.currentControls) {
             [self.currentControls endTextEntry];
@@ -370,7 +370,7 @@
                          }];
     } else {
         // End
-        [_instructions setText:@"Click the label at the top to go back"];
+        [_instructions setText:@"상단 레이블을 탭해 전으로 돌아가세요"];
 
         [UIView animateWithDuration:0.3f
             animations:^{

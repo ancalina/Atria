@@ -8,7 +8,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>In order to edit layout, 3D touch a homescreen icon, or triple tap behind them (on your wallpaper)</string>
+			<string>레이아웃을 편집하려면 홈 화면 아이콘을 3D 터치하거나, 배경화면을 세 번 탭하세요.</string>
 		</dict>
 		<dict>
 			<key>cellClass</key>
@@ -19,36 +19,56 @@
 		<dict>
 			<key>cellClass</key>
 			<string>ARITwitterCell</string>
+			<key>description</key>
+			<string>Original Developer</string>
 			<key>displayName</key>
 			<string>ren</string>
-			<key>description</key>
-			<string>Developer</string>
 			<key>height</key>
 			<integer>70</integer>
+			<key>imageName</key>
+			<string>ren</string>
+			<key>memorialMessage</key>
+			<string>2025년 5월 31일, Atria 공식 디스코드를 통해 ren7995님의 별세 소식이 전해졌습니다. 고인의 명복을 빕니다.</string>
+			<key>memorialTitle</key>
+			<string>ren7995</string>
 		</dict>
 		<dict>
-			<key>cell</key>
-			<string>PSButtonCell</string>
+			<key>cellClass</key>
+			<string>ARITwitterCell</string>
+			<key>description</key>
+			<string>maintainer</string>
+			<key>displayName</key>
+			<string>Ancal</string>
+			<key>height</key>
+			<integer>70</integer>
+			<key>imageName</key>
+			<string>ancal</string>
+			<key>username</key>
+			<string>TaekyungAncal</string>
+		</dict>
+		<dict>
 			<key>action</key>
 			<string>exportSettingsString</string>
-			<key>label</key>
-			<string>Export Settings</string>
-		</dict>
-		<dict>
 			<key>cell</key>
 			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>설정 내보내기</string>
+		</dict>
+		<dict>
 			<key>action</key>
 			<string>importSettingsString</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>Import Settings from Clipboard</string>
+			<string>클립보드에서 설정 가져오기</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Enable/Disable</string>
 			<key>footerText</key>
-			<string>A respring is required for these settings to change. Enabling "Save State" allows your icon layout to be preserved, even when going to safemode/stock.</string>
+			<string>변경 후 리스프링이 필요합니다. "아이콘 상태 저장"을 켜면 안전 모드나 기본 상태로 돌아가도 현재 레이아웃을 유지합니다.</string>
+			<key>label</key>
+			<string>사용</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -60,7 +80,7 @@
 			<key>key</key>
 			<string>enabled</string>
 			<key>label</key>
-			<string>Main Toggle</string>
+			<string>기능 활성화</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -72,7 +92,7 @@
 			<key>key</key>
 			<string>layoutEnabled</string>
 			<key>label</key>
-			<string>Layout Modifications</string>
+			<string>레이아웃 수정</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -84,7 +104,7 @@
 			<key>key</key>
 			<string>enableAppLibrary</string>
 			<key>label</key>
-			<string>Force App Library</string>
+			<string>앱 보관함</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -96,124 +116,130 @@
 			<key>key</key>
 			<string>saveIconState</string>
 			<key>label</key>
-			<string>Save Icon State</string>
+			<string>아이콘 상태 저장</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>Options</string>
+			<string>옵션</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSLinkCell</string>
-			<key>detail</key>
-			<string>ARIChildListController</string>
-			<key>label</key>
-			<string>General Options</string>
 			<key>child</key>
 			<string>General</string>
+			<key>detail</key>
+			<string>ARIChildListController</string>
 			<key>icon</key>
 			<string>gear</string>
+			<key>label</key>
+			<string>기본 옵션</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSLinkCell</string>
-			<key>detail</key>
-			<string>ARIChildListController</string>
-			<key>label</key>
-			<string>Editor</string>
 			<key>child</key>
 			<string>Editor</string>
+			<key>detail</key>
+			<string>ARIChildListController</string>
 			<key>icon</key>
 			<string>sliders</string>
+			<key>label</key>
+			<string>편집기</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSLinkCell</string>
-			<key>detail</key>
-			<string>ARIChildListController</string>
-			<key>label</key>
-			<string>Page Labels</string>
 			<key>child</key>
 			<string>PageLabels</string>
+			<key>detail</key>
+			<string>ARIPageLabelsListController</string>
 			<key>icon</key>
 			<string>text</string>
+			<key>label</key>
+			<string>페이지 레이블</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSLinkCell</string>
-			<key>detail</key>
-			<string>ARIChildListController</string>
-			<key>label</key>
-			<string>More Customization</string>
 			<key>child</key>
 			<string>Customization</string>
+			<key>detail</key>
+			<string>ARIChildListController</string>
 			<key>icon</key>
 			<string>paint</string>
+			<key>label</key>
+			<string>기타</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 		</dict>
 		<dict>
-			<key>cell</key>
-			<string>PSButtonCell</string>
 			<key>action</key>
 			<string>resetPrefs:</string>
-			<key>label</key>
-			<string>Reset All Preferences</string>
-		</dict>
-		<dict>
 			<key>cell</key>
 			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>모든 설정 초기화</string>
+		</dict>
+		<dict>
 			<key>action</key>
 			<string>resetSaveState:</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>Reset Save State</string>
+			<string>저장 상태 초기화</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Credits</string>
 			<key>footerText</key>
-			<string>Thank you to everyone who has helped me along the way of making this tweak! A special thanks to everyone who helped test the tweak throughout its various stages. Much love to you all 💜
+			<string>테스트와 조언으로 도와주신 모든 분들께 감사드립니다.
 - ren</string>
+			<key>label</key>
+			<string>크레딧</string>
 		</dict>
 		<dict>
 			<key>cellClass</key>
 			<string>ARITwitterCell</string>
-			<key>username</key>
-			<string>Quartz88244782</string>
+			<key>description</key>
+			<string>트윅 아이콘/조언</string>
 			<key>displayName</key>
 			<string>cakePhone</string>
-			<key>description</key>
-			<string>Tweak Icon/Advice</string>
 			<key>height</key>
 			<integer>70</integer>
+			<key>imageName</key>
+			<string>cakePhone</string>
+			<key>username</key>
+			<string>Quartz88244782</string>
 		</dict>
 		<dict>
 			<key>cellClass</key>
 			<string>ARITwitterCell</string>
-			<key>username</key>
-			<string>Kutarin_</string>
+			<key>description</key>
+			<string>아이콘들/조언</string>
 			<key>displayName</key>
 			<string>Alpha_Stream</string>
-			<key>description</key>
-			<string>Icons/Advice</string>
 			<key>height</key>
 			<integer>70</integer>
+			<key>imageName</key>
+			<string>Alpha_Stream</string>
+			<key>username</key>
+			<string>Kutarin_</string>
 		</dict>
 		<dict>
 			<key>cellClass</key>
 			<string>ARITwitterCell</string>
-			<key>displayName</key>
-			<string>Atria Beta Testers</string>
 			<key>description</key>
 			<string>🐜</string>
+			<key>displayName</key>
+			<string>Atria 베타 테스터분들</string>
 			<key>height</key>
 			<integer>70</integer>
+			<key>imageName</key>
+			<string>Atria_Beta_Testers</string>
 		</dict>
 	</array>
 	<key>title</key>

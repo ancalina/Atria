@@ -3,14 +3,14 @@
 <plist version="1.0">
 <dict>
 	<key>items</key>
-    <array>
-        <dict>
+	<array>
+		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>Editor Behavior</string>
+			<string>편집기 동작</string>
 		</dict>
-        <dict>
+		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -20,15 +20,15 @@
 			<key>key</key>
 			<string>showTooltips</string>
 			<key>label</key>
-			<string>Show Tooltips</string>
+			<string>툴팁 표시</string>
 		</dict>
-        <dict>
+		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Open From</string>
+			<key>footerText</key>
+			<string>열기 위치</string>
 		</dict>
-        <dict>
+		<dict>
 			<key>cell</key>
 			<string>PSSegmentCell</string>
 			<key>default</key>
@@ -37,10 +37,10 @@
 			<string>me.lau.AtriaPrefs</string>
 			<key>key</key>
 			<string>editorOpenFrom</string>
-            <key>validTitles</key>
+			<key>validTitles</key>
 			<array>
-				<string>Bottom</string>
-				<string>Top</string>
+				<string>아래쪽</string>
+				<string>위쪽</string>
 			</array>
 			<key>validValues</key>
 			<array>
@@ -48,16 +48,17 @@
 				<integer>1</integer>
 			</array>
 		</dict>
-        <dict>
+		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Activation Settings</string>
 			<key>footerText</key>
-			<string>Hide Actions: Hides Atria's 3D touch actions from the menu. Turn on if you are done configuring, and do not want to see the options. 
-Disable Tap Gesture: Disables the triple tap gesture that can be used to invoke Atria from the homescren pages</string>
+			<string>3D 터치 메뉴와 트리플 탭 호출을 끕니다.</string>
+			<key>label</key>
+			<string>호출 방식</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>me.lau.Atria/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -67,11 +68,11 @@ Disable Tap Gesture: Disables the triple tap gesture that can be used to invoke 
 			<key>key</key>
 			<string>hide3DTouchActions</string>
 			<key>label</key>
-			<string>Hide Actions</string>
-			<key>PostNotification</key>
-			<string>me.lau.Atria/ReloadPrefs</string>
+			<string>3D 터치에서 숨기기</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>me.lau.Atria/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -81,12 +82,10 @@ Disable Tap Gesture: Disables the triple tap gesture that can be used to invoke 
 			<key>key</key>
 			<string>disableTapGesture</string>
 			<key>label</key>
-			<string>Disable Tap Gesture</string>
-			<key>PostNotification</key>
-			<string>me.lau.Atria/ReloadPrefs</string>
+			<string>탭 제스처 비활성화</string>
 		</dict>
-    </array>
+	</array>
 	<key>title</key>
-	<string>Editor</string>
+	<string>편집기</string>
 </dict>
 </plist>

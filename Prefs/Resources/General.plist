@@ -4,15 +4,17 @@
 <dict>
 	<key>items</key>
 	<array>
-        <dict>
+		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>General</string>
 			<key>footerText</key>
-			<string>Requires a respring to apply.</string>
+			<string>적용하려면 리스프링이 필요합니다.</string>
+			<key>label</key>
+			<string>기본</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>me.lau.Atria/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -22,9 +24,7 @@
 			<key>key</key>
 			<string>dynamicWidgetSizing</string>
 			<key>label</key>
-			<string>Dynamic Widget Sizing</string>
-			<key>PostNotification</key>
-			<string>me.lau.Atria/ReloadPrefs</string>
+			<string>동적 위젯 크기 조절</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -36,9 +36,11 @@
 			<key>key</key>
 			<string>disableDock</string>
 			<key>label</key>
-			<string>Disable Dock</string>
+			<string>독 비활성화</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>me.lau.Atria/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -48,17 +50,15 @@
 			<key>key</key>
 			<string>scaleInsideFolders</string>
 			<key>label</key>
-			<string>Scale Icons In Folders</string>
-			<key>PostNotification</key>
-			<string>me.lau.Atria/ReloadPrefs</string>
+			<string>폴더 안 아이콘 크기 조절</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Homescreen Gestures</string>
 			<key>footerText</key>
-			<string>Disables homescreen activation gestures for certain features. Disabling app library gesture will not work if floating dock is enabled. Requires a respring to apply.</string>
+			<string>홈 화면 제스처를 끕니다. 앱 보관함 제스처는 플로팅 독 사용 중에는 비활성화되지 않습니다.</string>
+			<key>label</key>
+			<string>홈 화면 제스처</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -70,7 +70,7 @@
 			<key>key</key>
 			<string>disableTodayGesture</string>
 			<key>label</key>
-			<string>Disable Today View</string>
+			<string>오늘 보기 비활성화</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -82,15 +82,15 @@
 			<key>key</key>
 			<string>disableAppLibraryGesture</string>
 			<key>label</key>
-			<string>Disable App Library</string>
+			<string>앱 보관함 비활성화</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>iPad/Floating Dock</string>
 			<key>footerText</key>
-			<string>Requires a respring to apply.</string>
+			<string>적용하려면 리스프링이 필요합니다.</string>
+			<key>label</key>
+			<string>iPad/플로팅 독</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -102,7 +102,7 @@
 			<key>key</key>
 			<string>forceFloatingDock</string>
 			<key>label</key>
-			<string>Force Floating Dock</string>
+			<string>플로팅 독 강제</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -114,7 +114,7 @@
 			<key>key</key>
 			<string>disableFloatingDockGestures</string>
 			<key>label</key>
-			<string>Disable Dock Gestures</string>
+			<string>독 제스처 비활성화</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -126,7 +126,7 @@
 			<key>key</key>
 			<string>floatingDockAppLibrary</string>
 			<key>label</key>
-			<string>Show App Library</string>
+			<string>앱 보관함 표시</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -138,7 +138,7 @@
 			<key>key</key>
 			<string>floatingDockRecents</string>
 			<key>label</key>
-			<string>Show Recents</string>
+			<string>최근 앱 표시</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -149,11 +149,11 @@
 			<string>me.lau.AtriaPrefs</string>
 			<key>key</key>
 			<string>maxFloatingDockRecents</string>
-            <key>validTitles</key>
+			<key>validTitles</key>
 			<array>
-				<string>1 App</string>
-				<string>2 Apps</string>
-				<string>3 Apps</string>
+					<string>한 개</string>
+					<string>두 개</string>
+					<string>세 개</string>
 			</array>
 			<key>validValues</key>
 			<array>
@@ -162,15 +162,17 @@
 				<integer>3</integer>
 			</array>
 		</dict>
-        <dict>
+		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Hide Stuff</string>
 			<key>footerText</key>
-			<string>If these settings do not appear to instantly apply, try scrolling to a different page and back. Some may require a respring to apply.</string>
+			<string>바로 반영되지 않으면 다른 페이지로 이동했다가 돌아오세요.</string>
+			<key>label</key>
+			<string>항목 숨기기</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>me.lau.Atria/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -180,11 +182,11 @@
 			<key>key</key>
 			<string>hideBadges</string>
 			<key>label</key>
-			<string>Hide Icon Badges</string>
-			<key>PostNotification</key>
-			<string>me.lau.Atria/ReloadPrefs</string>
+			<string>아이콘 뱃지 숨기기</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>me.lau.Atria/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -194,11 +196,11 @@
 			<key>key</key>
 			<string>hidePageDots</string>
 			<key>label</key>
-			<string>Hide Page Dots</string>
-			<key>PostNotification</key>
-			<string>me.lau.Atria/ReloadPrefs</string>
+			<string>페이지 인디케이터 숨기기</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>me.lau.Atria/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -208,19 +210,19 @@
 			<key>key</key>
 			<string>hideFolderIconBG</string>
 			<key>label</key>
-			<string>Hide Folder Icon Blur</string>
-			<key>PostNotification</key>
-			<string>me.lau.Atria/ReloadPrefs</string>
+			<string>폴더 아이콘 블러 숨기기</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Icon Labels</string>
 			<key>footerText</key>
-			<string>If these settings do not appear to instantly apply, try scrolling to a different page and back</string>
+			<string>바로 반영되지 않으면 다른 페이지로 이동했다가 돌아오세요.</string>
+			<key>label</key>
+			<string>아이콘 레이블</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>me.lau.Atria/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -230,11 +232,11 @@
 			<key>key</key>
 			<string>hideLabels</string>
 			<key>label</key>
-			<string>Hide on Homescreen</string>
-			<key>PostNotification</key>
-			<string>me.lau.Atria/ReloadPrefs</string>
+			<string>홈화면에서 숨기기</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>me.lau.Atria/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -244,11 +246,11 @@
 			<key>key</key>
 			<string>hideLabelsAppLibrary</string>
 			<key>label</key>
-			<string>Hide in App Library</string>
-			<key>PostNotification</key>
-			<string>me.lau.Atria/ReloadPrefs</string>
+			<string>앱 보관함에서 숨기기</string>
 		</dict>
 		<dict>
+			<key>PostNotification</key>
+			<string>me.lau.Atria/ReloadPrefs</string>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>default</key>
@@ -258,12 +260,10 @@
 			<key>key</key>
 			<string>hideLabelsFolders</string>
 			<key>label</key>
-			<string>Hide In Folders</string>
-			<key>PostNotification</key>
-			<string>me.lau.Atria/ReloadPrefs</string>
+			<string>폴더에서 숨기기</string>
 		</dict>
 	</array>
 	<key>title</key>
-	<string>General</string>
+	<string>기본</string>
 </dict>
 </plist>

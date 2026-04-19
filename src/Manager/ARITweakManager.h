@@ -196,6 +196,7 @@ typedef struct SBRootFolderViewMetrics {
 @property (nonatomic, readonly, assign) NSUInteger firmwareVersion;
 @property (nonatomic, readonly, assign, getter=isDeviceIPad) BOOL deviceIPad;
 @property (nonatomic, readonly, assign, getter=isShyLabelsInstalled) BOOL shyLabelsInstalled;
+@property (nonatomic, readonly, assign, getter=isGriddyInstalled) BOOL griddyInstalled;
 - (void)updateLayoutForEditing:(BOOL)animated;
 - (void)updateLayoutForRoot:(BOOL)forRoot forDock:(BOOL)forDock animated:(BOOL)animated;
 - (void)relayoutEntireIconModel;

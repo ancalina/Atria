@@ -9,12 +9,18 @@
     UIImageView *_icon;
 }
 
+static UIImage *ARIAHeaderImageNamed(NSString *name) {
+    NSBundle *bundle = [NSBundle bundleForClass:[ARIHeaderCell class]];
+    NSString *path = [bundle pathForResource:name ofType:@"png"];
+    return path ? [UIImage imageWithContentsOfFile:path] : nil;
+}
+
 - (id)initWithStyle:(UITableViewCellStyle)style
     reuseIdentifier:(NSString *)reuseIdentifier {
     self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
 
     if(self) {
-        _icon = [[UIImageView alloc] initWithImage:[UIImage imageWithContentsOfFile:@THEOS_PACKAGE_INSTALL_PREFIX "/Library/PreferenceBundles/AtriaPrefs.bundle/full.png"]];
+        _icon = [[UIImageView alloc] initWithImage:ARIAHeaderImageNamed(@"full")];
         [self addSubview:_icon];
         _icon.layer.masksToBounds = YES;
         _icon.layer.cornerCurve = kCACornerCurveContinuous;

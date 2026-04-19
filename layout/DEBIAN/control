@@ -1,10 +1,10 @@
-Architecture: iphoneos-arm
-Author: ren7995
+Architecture: iphoneos-arm64e
+Author: ren7995, ancalina
 Depends: firmware (>= 13.0), mobilesubstrate, preferenceloader, ws.hbang.alderis (>= 1.1)
 Conflicts: com.irepo.boxy4, me.kritanta.homepluspro
 Description: A proper homescreen layout editor for iOS 13-16
-Maintainer: ren7995
+Maintainer: ancal
 Name: Atria
-Package: me.lau.atria
+Package: me.ancal.atria
 Section: Tweaks
-Version: 1.4.1
+Version: 1.4.1k3

@@ -10,8 +10,96 @@
 #import "../UI/Label/ARIPageLabelView.h"
 #import "../UI/Label/ARIWelcomeLabelView.h"
 #import "../UI/ARIBackgroundView.h"
+#include <objc/runtime.h>
 
 static BOOL didLaunchSB = NO;
+
+@interface SBIconListModel (ARIGriddyCompat)
+- (void)setGriddyShouldPatch:(BOOL)value;
+@end
+
+static BOOL ARIStringLooksLikeFloatingDock(NSString *string) {
+	if(![string isKindOfClass:[NSString class]] || string.length == 0) return NO;
+	return [string containsString:@"FloatingDock"] || [string containsString:@"DockSuggestions"];
+}
+
+static BOOL ARIStringLooksLikeAppLibrary(NSString *string) {
+	if(![string isKindOfClass:[NSString class]] || string.length == 0) return NO;
+	return [string containsString:@"AppLibrary"] || [string containsString:@"LibraryCategoryPod"];
+}
+
+static BOOL ARIObjectHierarchyLooksLikeFloatingDock(UIView *view) {
+	UIView *current = view;
+	while(current) {
+		if(ARIStringLooksLikeFloatingDock(NSStringFromClass([current class]))) return YES;
+		current = current.superview;
+	}
+	return NO;
+}
+
+static BOOL ARIShouldDisableGriddyForLocation(NSString *location) {
+	if(![[ARITweakManager sharedInstance] isGriddyInstalled]) return NO;
+	if(![location isKindOfClass:[NSString class]] || location.length == 0) return NO;
+	return ARIStringLooksLikeFloatingDock(location) || ARIStringLooksLikeAppLibrary(location);
+}
+
+static BOOL ARIIsLibraryCategoryParent(id parent) {
+	if(!parent) return NO;
+
+	Class libraryCategoryFolderCls = objc_getClass("SBHLibraryCategoryFolder");
+	if(libraryCategoryFolderCls && [parent isKindOfClass:libraryCategoryFolderCls]) return YES;
+
+	NSString *className = NSStringFromClass([parent class]);
+	return [className containsString:@"SBHLibrary"];
+}
+
+static BOOL ARIIsGriddyFolderPreviewCallStack(void) {
+	NSArray<NSString *> *symbols = [NSThread callStackSymbols];
+	for(NSString *symbol in symbols) {
+		if([symbol containsString:@"SBFolderIconImageView"] ||
+		   [symbol containsString:@"_SBIconGridWrapperView"] ||
+		   [symbol containsString:@"SBFolderPageElement"]) {
+			return YES;
+		}
+	}
+	return NO;
+}
+
+static BOOL ARIShouldDisableGriddyForModel(SBIconListModel *model) {
+	if(!model) return NO;
+
+	NSString *location = model._atriaLocation;
+	SBIconListView *listView = nil;
+	if((![location isKindOfClass:[NSString class]] || location.length == 0) &&
+	   [model respondsToSelector:@selector(_atriaListView)]) {
+		listView = [model _atriaListView];
+		if([listView respondsToSelector:@selector(iconLocation)]) {
+			location = listView.iconLocation;
+		}
+	} else if([model respondsToSelector:@selector(_atriaListView)]) {
+		listView = [model _atriaListView];
+	}
+
+	if(ARIShouldDisableGriddyForLocation(location)) return YES;
+	if(IsLocationFolder(location) && ARIIsGriddyFolderPreviewCallStack()) return YES;
+	if(listView) {
+		if(ARIStringLooksLikeFloatingDock(listView.iconLocation)) return YES;
+		if(ARIObjectHierarchyLooksLikeFloatingDock(listView)) return YES;
+	}
+
+	id parent = nil;
+	if([model respondsToSelector:@selector(valueForKey:)]) {
+		@try {
+			parent = [model valueForKey:@"parent"];
+		} @catch(__unused NSException *exception) {}
+	}
+
+	if(ARIStringLooksLikeFloatingDock(NSStringFromClass([parent class]))) return YES;
+	if(ARIIsLibraryCategoryParent(parent)) return YES;
+	if(ARIIsLibraryCategoryParent(model.folder)) return YES;
+
+	return NO;
+}
 
 @interface SBHDefaultIconListLayoutProvider : NSObject
 - (SBIconListFlowExtendedLayout *)layoutForIconLocation:(NSString *)location;
@@ -50,6 +138,22 @@ static BOOL didLaunchSB = NO;
 
 - (void)layoutIconsNow {
 	self._atriaNeedsLayout = YES;
+	%orig;
+}
+
+- (void)layoutIconsIfNeeded {
+	if([[ARITweakManager sharedInstance] isGriddyInstalled] && ARIObjectHierarchyLooksLikeFloatingDock(self)) {
+		self.model._atriaLocation = @"SBIconLocationFloatingDock";
+		if([self.model respondsToSelector:@selector(setGriddyShouldPatch:)]) {
+			[self.model setGriddyShouldPatch:NO];
+		}
+		%orig;
+		if([self.model respondsToSelector:@selector(setGriddyShouldPatch:)]) {
+			[self.model setGriddyShouldPatch:NO];
+		}
+		return;
+	}
+
 	%orig;
 }
 
@@ -267,6 +371,28 @@ static BOOL didLaunchSB = NO;
 
 %end
 
+%group GriddyFloatingDockCompat
+
+%hook SBIconListModel
+
+- (BOOL)griddyShouldPatch {
+	if(ARIShouldDisableGriddyForModel(self)) return NO;
+	return %orig;
+}
+
+- (void)setGriddyShouldPatch:(BOOL)value {
+	if(ARIShouldDisableGriddyForModel(self)) {
+		%orig(NO);
+		return;
+	}
+
+	%orig(value);
+}
+
+%end
+
+%end
+
 // Layout provider hook
 %hook SBHDefaultIconListLayoutProvider
 
@@ -309,6 +435,9 @@ static void preferencesChanged() {
 	if([manager isEnabled] && [manager boolValueForKey:@"layoutEnabled"]) {
 		NSLog(@"[Atria]: Loading hooks from %s", __FILE__);
 		%init();
+		if([manager isGriddyInstalled]) {
+			%init(GriddyFloatingDockCompat);
+		}
 
 		CFNotificationCenterAddObserver(
 			CFNotificationCenterGetDarwinNotifyCenter(),

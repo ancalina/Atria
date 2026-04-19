@@ -11,6 +11,7 @@
 - (NSArray *)specifiers {
     if(!_specifiers) {
         _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
+        [self atriaResolveIconPathsForSpecifiers:_specifiers];
     }
 
     return _specifiers;
@@ -70,15 +71,10 @@
     NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:ARIPreferenceDomain];
     [defaults synchronize];
 
-    // Load preferences plist
+    // Export the live defaults domain instead of depending on the backing plist file.
     NSError *error;
-    NSURL *url = [NSURL fileURLWithPath:@THEOS_PACKAGE_INSTALL_PREFIX "/var/mobile/Library/Preferences/me.lau.AtriaPrefs.plist"];
-    NSMutableDictionary *dict = [[NSDictionary dictionaryWithContentsOfURL:url error:&error] mutableCopy]
-                                    ?: [NSMutableDictionary new];
-    if(error) {
-        [self displayAlert:@"Failed to export" message:[NSString stringWithFormat:@"Error: %@", error.localizedDescription]];
-        return;
-    }
+    NSDictionary *domainDictionary = [[NSUserDefaults standardUserDefaults] persistentDomainForName:ARIPreferenceDomain];
+    NSMutableDictionary *dict = [domainDictionary mutableCopy] ?: [NSMutableDictionary new];
 
     // The underscore prefix means it's an internal setting, not meant to be shared
     for(NSString *key in [dict allKeys])
@@ -123,7 +119,6 @@
     defaults = [[NSUserDefaults alloc] initWithSuiteName:ARIPreferenceDomain];
     [defaults synchronize];
 
-    // Set ARIDidSplashPreferenceKey, since they are in preferences already
     [defaults setObject:@(YES) forKey:ARIDidSplashPreferenceKey];
 
     for(NSString *key in [settingsDictionary allKeys]) {

@@ -3,6 +3,56 @@
 #import "ARITweakManager.h"
 
 #include <objc/runtime.h>
+#include <dlfcn.h>
+
+static NSString *ARIAEditorResourceDirectoryPath(void) {
+    static NSString *resourceDirectoryPath;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSMutableArray<NSString *> *candidates = [NSMutableArray new];
+
+        Dl_info info = {0};
+        if(dladdr((const void *)&ARIAEditorResourceDirectoryPath, &info) && info.dli_fname) {
+            NSString *dylibDirectory = [@(info.dli_fname) stringByDeletingLastPathComponent];
+            [candidates addObject:[dylibDirectory stringByAppendingPathComponent:@".jbroot/Library/PreferenceBundles/AtriaPrefs.bundle/Editor"]];
+        }
+
+        [candidates addObject:@THEOS_PACKAGE_INSTALL_PREFIX "/Library/PreferenceBundles/AtriaPrefs.bundle/Editor"];
+        [candidates addObject:@"/Library/PreferenceBundles/AtriaPrefs.bundle/Editor"];
+
+        NSFileManager *fileManager = [NSFileManager defaultManager];
+        for(NSString *candidate in candidates) {
+            BOOL isDirectory = NO;
+            if([fileManager fileExistsAtPath:candidate isDirectory:&isDirectory] && isDirectory) {
+                resourceDirectoryPath = candidate;
+                break;
+            }
+        }
+    });
+    return resourceDirectoryPath;
+}
+
+static NSString *ARIAEditorResourcePath(NSString *name) {
+    if(![name isKindOfClass:[NSString class]] || name.length == 0) return nil;
+
+    NSString *resourceDirectory = ARIAEditorResourceDirectoryPath();
+    if(resourceDirectory.length == 0) return nil;
+
+    NSArray<NSString *> *candidateNames = @[
+        name,
+        [name stringByReplacingOccurrencesOfString:@" " withString:@"_"]
+    ];
+
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    for(NSString *candidateName in candidateNames) {
+        NSString *path = [resourceDirectory stringByAppendingPathComponent:[candidateName stringByAppendingPathExtension:@"png"]];
+        if([fileManager fileExistsAtPath:path]) {
+            return path;
+        }
+    }
+
+    return nil;
+}
 
 @implementation ARIEditManager {
     BOOL _isEditing;
@@ -97,17 +147,17 @@
 - (void)presentEditAlert {
     ARITweakManager *manager = [ARITweakManager sharedInstance];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Atria"
-                                                                   message:@"What would you like to edit?"
+                                                                   message:@"무엇을 수정할까요?"
                                                             preferredStyle:UIAlertControllerStyleAlert];
 
-    [alert addAction:[self _createEditAlertAction:@"Homescreen Pages" editLocation:@"hs"]];
-    [alert addAction:[self _createEditAlertAction:@"Dock" editLocation:@"dock"]];
-    [alert addAction:[self _createEditAlertAction:@"Page Labels" editLocation:@"label"]];
-    [alert addAction:[self _createEditAlertAction:@"Page Dots" editLocation:@"pagedot"]];
+    [alert addAction:[self _createEditAlertAction:@"홈화면" editLocation:@"hs"]];
+    [alert addAction:[self _createEditAlertAction:@"독" editLocation:@"dock"]];
+    [alert addAction:[self _createEditAlertAction:@"페이지 레이블" editLocation:@"label"]];
+    [alert addAction:[self _createEditAlertAction:@"페이지 인디케이터" editLocation:@"pagedot"]];
     if([manager boolValueForKey:@"showBackground"]) {
-        [alert addAction:[self _createEditAlertAction:@"Background Blur" editLocation:@"blur"]];
+        [alert addAction:[self _createEditAlertAction:@"배경 블러" editLocation:@"blur"]];
     }
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel"
+    [alert addAction:[UIAlertAction actionWithTitle:@"취소"
                                               style:UIAlertActionStyleCancel
                                             handler:^(UIAlertAction *action){
                                             }]];
@@ -162,7 +212,7 @@
     }
 
     // Calculate path and set image
-    NSString *path = [NSString stringWithFormat:@THEOS_PACKAGE_INSTALL_PREFIX "/Library/PreferenceBundles/AtriaPrefs.bundle/Editor/%@.png", key];
+    NSString *path = ARIAEditorResourcePath(key);
     cell.img.image = [[UIImage imageWithContentsOfFile:path] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate] ?: [UIImage systemImageNamed:@"gear"];
 
     return cell;

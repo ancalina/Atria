@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>레이블 스크립트</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>me.lau.Atria/ReloadPrefs</string>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>me.lau.AtriaPrefs</string>
+			<key>key</key>
+			<string>labelScriptEnabled</string>
+			<key>label</key>
+			<string>사용</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>openVisualEditor</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>스크립트 에디터</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>openScriptEditor</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>소스 편집기</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>installExampleScript</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>예제 적용</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>validateCurrentScript</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>검사</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>clearCurrentScript</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>비우기</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+		</dict>
+	</array>
+	<key>title</key>
+	<string>레이블 스크립트</string>
+</dict>
+</plist>

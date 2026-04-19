@@ -9,6 +9,110 @@
 
 #include <objc/runtime.h>
 
+@interface SBIconImageView : UIView
+@property (readonly, nonatomic) SBIcon *icon;
+@property (nonatomic, readwrite) SBIconView *iconView;
+@end
+
+@interface SBFolder : NSObject
+@property (nonatomic, strong) NSArray *lists;
+@property (nonatomic, strong) id firstList;
+@end
+
+@interface SBIconListModel (ARIGriddyCompat)
+- (void)setGriddyShouldPatch:(BOOL)value;
+@end
+
+@interface SBFolderIcon : SBIcon
+@property (nonatomic, strong) SBFolder *folder;
+@end
+
+@interface SBFolderIconImageView : SBIconImageView
+@end
+
+@interface _SBFolderPageElement : NSObject
+@property (nonatomic) NSUInteger pageIndex;
+@property (weak, nonatomic) SBFolderIcon *folderIcon;
+@end
+
+@interface _SBIconGridWrapperView : UIImageView
+@property (retain, nonatomic) _SBFolderPageElement *element;
+@property (nonatomic, readwrite) SBFolderIconImageView *folderIconImageView;
+@end
+
+static BOOL ARIStringLooksLikeLibrary(NSString *string) {
+	return [string containsString:@"SBHLibrary"] ||
+		   [string containsString:@"AppLibrary"] ||
+		   [string containsString:@"LibraryAdditionalItemsIndicator"] ||
+		   [string containsString:@"CategoryPod"];
+}
+
+static BOOL ARIObjectHierarchyLooksLikeLibrary(id object) {
+	id current = object;
+	while(current && [current isKindOfClass:[UIView class]]) {
+		NSString *className = NSStringFromClass([current class]);
+		if(ARIStringLooksLikeLibrary(className)) return YES;
+		current = [(UIView *)current superview];
+	}
+	return NO;
+}
+
+static BOOL ARIIconLooksLikeAppLibrary(id icon) {
+	if(!icon) return NO;
+
+	@try {
+		id location = [icon valueForKey:@"location"];
+		if([location isKindOfClass:[NSString class]] &&
+		   (IsLocationAppLibrary(location) || IsLocationAppLibraryPod(location))) {
+			return YES;
+		}
+	} @catch(__unused NSException *exception) {}
+
+	@try {
+		id folder = [icon valueForKey:@"folder"];
+		NSString *folderClassName = NSStringFromClass([folder class]);
+		if(ARIStringLooksLikeLibrary(folderClassName)) return YES;
+	} @catch(__unused NSException *exception) {}
+
+	return ARIStringLooksLikeLibrary(NSStringFromClass([icon class]));
+}
+
+static BOOL ARIShouldBypassGriddyForAppLibraryFolderImageView(SBFolderIconImageView *view) {
+	if(![[ARITweakManager sharedInstance] isGriddyInstalled] || !view) return NO;
+	if(ARIObjectHierarchyLooksLikeLibrary(view)) return YES;
+	return ARIIconLooksLikeAppLibrary(view.icon);
+}
+
+static id ARIModelForFolderPageElement(_SBFolderPageElement *element) {
+	if(!element) return nil;
+	SBFolderIcon *folderIcon = element.folderIcon;
+	SBFolder *folder = folderIcon.folder;
+	if(!folder) return nil;
+
+	NSArray *lists = folder.lists;
+	NSUInteger pageIndex = element.pageIndex;
+	if([lists isKindOfClass:[NSArray class]] && pageIndex < lists.count) {
+		return lists[pageIndex];
+	}
+
+	return folder.firstList;
+}
+
+static void ARIDisableGriddyForModel(id model) {
+	if([model respondsToSelector:@selector(setGriddyShouldPatch:)]) {
+		@try {
+			[model setGriddyShouldPatch:NO];
+		} @catch(__unused NSException *exception) {}
+	}
+}
+
+static BOOL ARIShouldBypassGriddyForAppLibraryGridWrapper(_SBIconGridWrapperView *view) {
+	if(![[ARITweakManager sharedInstance] isGriddyInstalled] || !view) return NO;
+	if(ARIObjectHierarchyLooksLikeLibrary(view)) return YES;
+	if(ARIShouldBypassGriddyForAppLibraryFolderImageView(view.folderIconImageView)) return YES;
+	return ARIIconLooksLikeAppLibrary(view.element.folderIcon);
+}
+
 @interface SBSApplicationShortcutIcon : NSObject
 @end
 
@@ -53,7 +157,7 @@
 	}
 
 	if(IconIsInRoot(self)) {
-    	if([manager boolValueForKey:@"hideLabels"]) allows = NO;
+	    	if([manager boolValueForKey:@"hideLabels"]) allows = NO;
 	} else if(IconIsInAppLibrary(self) || IconIsInAppLibraryPod(self)) {
 		if([manager boolValueForKey:@"hideLabelsAppLibrary"]) allows = NO;
 	} else if(IconIsInFolder(self)) {
@@ -219,14 +323,14 @@
 	if(!items) items = [NSMutableArray new];
 
 	if(IconIsInRoot(self)) {
-		[items addObject:[self _atriaGenerateItemWithTitle:@"Edit Layout" type:@"me.lau.atria.edit.hs"]];
-		[items addObject:[self _atriaGenerateItemWithTitle:@"Edit Page Dots" type:@"me.lau.atria.edit.pagedot"]];
-		[items addObject:[self _atriaGenerateItemWithTitle:@"Edit Page Labels" type:@"me.lau.atria.edit.label"]];
+		[items addObject:[self _atriaGenerateItemWithTitle:@"홈화면 편집" type:@"me.lau.atria.edit.hs"]];
+		[items addObject:[self _atriaGenerateItemWithTitle:@"인디케이터 편집" type:@"me.lau.atria.edit.pagedot"]];
+		[items addObject:[self _atriaGenerateItemWithTitle:@"페이지 레이블 편집" type:@"me.lau.atria.edit.label"]];
 		if([[ARITweakManager sharedInstance] boolValueForKey:@"showBackground"]) {
-			[items addObject:[self _atriaGenerateItemWithTitle:@"Edit Background Blur" type:@"me.lau.atria.edit.blur"]];
+			[items addObject:[self _atriaGenerateItemWithTitle:@"배경 블러 편집" type:@"me.lau.atria.edit.blur"]];
 		}
 	} else if(IconIsInDock(self)) {
-		[items addObject:[self _atriaGenerateItemWithTitle:@"Edit Dock" type:@"me.lau.atria.edit.dock"]];
+		[items addObject:[self _atriaGenerateItemWithTitle:@"독 편집" type:@"me.lau.atria.edit.dock"]];
 	}
 
 	return items;
@@ -274,6 +378,15 @@
 
 %hook SBFolderIconImageView
 
+- (CGRect)frameForMiniIconAtIndex:(NSUInteger)arg0 {
+	if(ARIShouldBypassGriddyForAppLibraryFolderImageView(self)) {
+		ARIDisableGriddyForModel(((SBFolderIcon *)self.icon).folder.firstList);
+		return %orig(arg0);
+	}
+
+	return %orig;
+}
+
 - (void)setBackgroundView:(id)arg1 {
 	if([[ARITweakManager sharedInstance] boolValueForKey:@"hideFolderIconBG"]) {
 		// By setting a fresh UIView, it doesn't bug out, and it fades instead of glitching when closing the folder
@@ -282,6 +395,29 @@
 	}
 
 	%orig(arg1);
+}
+
+%end
+
+%hook _SBIconGridWrapperView
+
+- (void)setImage:(UIImage *)image {
+	if(ARIShouldBypassGriddyForAppLibraryGridWrapper(self)) {
+		ARIDisableGriddyForModel(ARIModelForFolderPageElement(self.element));
+		%orig(image);
+		return;
+	}
+
+	%orig;
+}
+
+- (void)layoutSubviews {
+	CGRect originalFrame = self.frame;
+	%orig;
+
+	if(ARIShouldBypassGriddyForAppLibraryGridWrapper(self)) {
+		self.frame = originalFrame;
+	}
 }
 
 %end

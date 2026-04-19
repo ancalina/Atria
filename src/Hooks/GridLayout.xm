@@ -31,9 +31,9 @@ static struct SBHIconGridSizeClassSizes generateGridSizeClassSizes(double cols, 
 	} else {
 		// Usually 2x2, 4x2, 4x4, 4x6
 		sizes.small = (struct SBHIconGridSize) { .width = ROUND_SHORT(cols / 2), .height = ROUND_SHORT(rows / 3) };
-		sizes.medium = (struct SBHIconGridSize) { .width = cols, .height = ROUND_SHORT(rows / 3) };
-		sizes.large = (struct SBHIconGridSize) { .width = cols, .height = ROUND_SHORT(rows * 2 / 3) };
-		sizes.extraLarge = (struct SBHIconGridSize) { .width = cols, .height = rows };
+		sizes.medium = (struct SBHIconGridSize) { .width = ROUND_SHORT(cols), .height = ROUND_SHORT(rows / 3) };
+		sizes.large = (struct SBHIconGridSize) { .width = ROUND_SHORT(cols), .height = ROUND_SHORT(rows * 2 / 3) };
+		sizes.extraLarge = (struct SBHIconGridSize) { .width = ROUND_SHORT(cols), .height = ROUND_SHORT(rows) };
 	}
 	return sizes;
 }

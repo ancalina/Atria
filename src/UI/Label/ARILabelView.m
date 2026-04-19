@@ -5,10 +5,19 @@
 
 #import "ARILabelView.h"
 #import "../../Manager/ARITweakManager.h"
-
+#import "../../../Shared/ARIPathUtils.h"
+#import "../../../Shared/ARISharedConstants.h"
 #import <CoreText/CTFont.h>
 #import <CoreText/CTFontDescriptor.h>
 #import <CoreText/CTFontManager.h>
+
+static NSString *const ARILabelFontModeKey = @"labelFontMode";
+static NSString *const ARILabelCustomFontPathKey = @"labelCustomFontPath";
+static NSString *const ARILabelNamedFontNameKey = @"labelCustomFontName";
+static NSString *const ARILabelFontModeSystem = @"system";
+static NSString *const ARILabelFontModeBundle = @"bundle";
+static NSString *const ARILabelFontModeImported = @"imported";
+static NSString *const ARILabelFontModeNamed = @"named";
 
 @implementation ARILabelView {
     NSString *_rawText;
@@ -53,9 +62,31 @@
 
     BOOL scheduled = timer != nil;
     // If wasn't a scheduled update, reload raw text
-    if(!scheduled) _rawText = [self loadRawText];
-    // Process text
-    _textField.text = [self processRawText:_rawText isScheduledUpdate:scheduled];
+    if(!scheduled) {
+        id loadedText = [self loadRawText];
+        [self setCurrentRawText:[loadedText isKindOfClass:[NSString class]] ? loadedText : @""];
+    }
+
+    NSString *rawText = [self currentRawText];
+    NSString *processedText = rawText;
+    @try {
+        id value = [self processRawText:rawText isScheduledUpdate:scheduled];
+        if([value isKindOfClass:[NSString class]]) {
+            processedText = value;
+        }
+    } @catch (__unused NSException *exception) {
+        processedText = rawText;
+    }
+
+    _textField.text = processedText;
+}
+
+- (void)setCurrentRawText:(NSString *)rawText {
+    _rawText = [rawText isKindOfClass:[NSString class]] ? [rawText copy] : @"";
+}
+
+- (NSString *)currentRawText {
+    return [_rawText isKindOfClass:[NSString class]] ? [_rawText copy] : @"";
 }
 
 - (void)setupTextField:(UITextField *)textField {
@@ -144,7 +175,7 @@
 - (BOOL)textFieldShouldBeginEditing:(UITextField *)textField {
     [ARITweakManager dismissFloatingDockIfPossible];
     // Set to the raw text
-    _textField.text = _rawText;
+    _textField.text = [self currentRawText];
     return YES;
 }
 
@@ -191,15 +222,60 @@
 
 + (CTFontDescriptorRef)getCustomFontDescriptorOrNull {
     static CTFontDescriptorRef cfdesc = NULL;
-    static dispatch_once_t token;
-    dispatch_once(&token, ^{
-        // Load font once
-        NSData *fileData = [NSData dataWithContentsOfFile:@THEOS_PACKAGE_INSTALL_PREFIX "/Library/PreferenceBundles/AtriaPrefs.bundle/Custom.ttf"];
+    static NSString *cachedFontIdentifier = nil;
+
+    NSUserDefaults *preferences = [[NSUserDefaults alloc] initWithSuiteName:ARIPreferenceDomain];
+    NSString *mode = [preferences objectForKey:ARILabelFontModeKey];
+    if(![mode isKindOfClass:[NSString class]] || mode.length == 0) {
+        mode = ARILabelFontModeBundle;
+    }
+
+    NSString *fontIdentifier = mode ?: ARILabelFontModeSystem;
+    NSString *fontPath = nil;
+    NSString *fontName = nil;
+    if([mode isEqualToString:ARILabelFontModeImported]) {
+        NSString *importedPath = [preferences objectForKey:ARILabelCustomFontPathKey];
+        if([importedPath isKindOfClass:[NSString class]] && importedPath.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:importedPath]) {
+            fontPath = importedPath;
+            fontIdentifier = [NSString stringWithFormat:@"imported:%@", importedPath];
+        }
+    } else if([mode isEqualToString:ARILabelFontModeNamed]) {
+        NSString *selectedFontName = [preferences objectForKey:ARILabelNamedFontNameKey];
+        if([selectedFontName isKindOfClass:[NSString class]] && selectedFontName.length > 0 && [UIFont fontWithName:selectedFontName size:17.0]) {
+            fontName = selectedFontName;
+            fontIdentifier = [NSString stringWithFormat:@"named:%@", selectedFontName];
+        }
+    } else if(![mode isEqualToString:ARILabelFontModeSystem]) {
+        fontPath = ARIPreferenceBundleResourcePath(@"Custom", @"ttf", nil);
+        if(fontPath.length > 0) {
+            fontIdentifier = [NSString stringWithFormat:@"bundle:%@", fontPath];
+        }
+    }
+
+    @synchronized(self) {
+        if([cachedFontIdentifier isEqualToString:fontIdentifier]) {
+            return cfdesc;
+        }
+
+        if(cfdesc != NULL) {
+            CFRelease(cfdesc);
+            cfdesc = NULL;
+        }
+        cachedFontIdentifier = [fontIdentifier copy];
+
+        NSData *fileData = fontPath.length > 0 ? [NSData dataWithContentsOfFile:fontPath] : nil;
         if(fileData) {
             cfdesc = CTFontManagerCreateFontDescriptorFromData((CFDataRef)fileData);
+        } else if(fontName.length > 0) {
+            CTFontRef ctfont = CTFontCreateWithName((CFStringRef)fontName, 17.0, nil);
+            if(ctfont != NULL) {
+                cfdesc = CTFontCopyFontDescriptor(ctfont);
+                CFRelease(ctfont);
+            }
         }
-    });
-    return cfdesc;
+
+        return cfdesc;
+    }
 }
 
 @end

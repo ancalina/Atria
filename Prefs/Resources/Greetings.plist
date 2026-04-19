@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>%이름% 형식으로 씁니다.</string>
+			<key>label</key>
+			<string>토큰</string>
+		</dict>
+	</array>
+	<key>title</key>
+	<string>맞춤 토큰</string>
+</dict>
+</plist>

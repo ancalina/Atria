@@ -4,11 +4,11 @@
 //
 
 #import "Shared.h"
+#import "../../Shared/ARIPathUtils.h"
 #import "../Manager/ARITweakManager.h"
 #import "../Manager/ARIEditManager.h"
 #import "../UI/Splash/ARISplashViewController.h"
 #import "../UI/Label/ARILabelView.h"
-
 #include <dlfcn.h>
 
 
@@ -28,7 +28,7 @@
         [splash addEntry:@"See the preference pane in the Settings app for even more options" image:[UIImage systemImageNamed:[manager firmwareVersion] >= 14 ? @"gearshape" : @"gear"]];
         [splash addEntry:@"If you encounter a bug, don't hesitate to report it! Please include your device and iOS version." image:[UIImage systemImageNamed:[manager firmwareVersion] >= 14 ? @"ladybug" : @"ant"]];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.0 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [[objc_getClass("SBIconController") sharedInstance] presentViewController:splash animated:YES completion:nil];
+            //[[objc_getClass("SBIconController") sharedInstance] presentViewController:splash animated:YES completion:nil];
         });
     }
 }
@@ -140,8 +140,8 @@
         }
 
         // Zenith compatibility
-        NSString *const zenithPath = @THEOS_PACKAGE_INSTALL_PREFIX "/Library/MobileSubstrate/DynamicLibraries/Zenith.dylib";
-        if([[NSFileManager defaultManager] fileExistsAtPath:zenithPath]) {
+        NSString *const zenithPath = ARIMobileSubstrateDylibPath(@"Zenith");
+        if(zenithPath.length > 0) {
             dlopen([zenithPath UTF8String], RTLD_NOW);
             %init(ZenithFix);
         }

@@ -12,6 +12,7 @@
 - (NSArray *)specifiers {
     if(!_specifiers && _childName) {
         _specifiers = [self loadSpecifiersFromPlistName:_childName target:self];
+        [self atriaResolveIconPathsForSpecifiers:_specifiers];
     }
 
     return _specifiers;
