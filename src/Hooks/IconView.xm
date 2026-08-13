@@ -7,111 +7,79 @@
 #import "../Manager/ARITweakManager.h"
 #import "../Manager/ARIEditManager.h"
 
+#include <objc/message.h>
 #include <objc/runtime.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+static const char *ARIIconUnqualifiedTypeEncoding(const char *encoding) {
+	while(encoding && *encoding && strchr("rnNoORV", *encoding)) encoding++;
+	return encoding;
+}
+
+static BOOL ARIIconTypeMatches(const char *encoding, char expectedKind,
+							   NSUInteger expectedSize) {
+	const char *unqualified = ARIIconUnqualifiedTypeEncoding(encoding);
+	if(!unqualified || *unqualified != expectedKind) return NO;
+	if(expectedKind == 'v') return expectedSize == 0;
+
+	NSUInteger actualSize = 0;
+	NSGetSizeAndAlignment(unqualified, &actualSize, NULL);
+	return actualSize == expectedSize;
+}
+
+static BOOL ARIIconMethodMatchesVoidObjectABI(Class cls, SEL selector,
+										  BOOL classMethod,
+										  NSUInteger objectArgumentCount) {
+	if(!cls || !selector) return NO;
+	Method method = classMethod
+		? class_getClassMethod(cls, selector)
+		: class_getInstanceMethod(cls, selector);
+	if(!method || method_getNumberOfArguments(method) != objectArgumentCount + 2)
+		return NO;
+
+	char *returnType = method_copyReturnType(method);
+	BOOL matches = ARIIconTypeMatches(returnType, 'v', 0);
+	free(returnType);
+	if(!matches) return NO;
+
+	for(NSUInteger index = 0; index < objectArgumentCount; index++) {
+		char *argumentType = method_copyArgumentType(
+			method, (unsigned int)index + 2);
+		matches = ARIIconTypeMatches(argumentType, '@', sizeof(id));
+		free(argumentType);
+		if(!matches) return NO;
+	}
+	return YES;
+}
+
+static id ARIObjectByCallingNoArgumentSelector(id object, SEL selector) {
+	if(!object || !selector || ![object respondsToSelector:selector]) return nil;
+
+	Method method = class_getInstanceMethod(object_getClass(object), selector);
+	if(!method || method_getNumberOfArguments(method) != 2) return nil;
+
+	char *returnType = method_copyReturnType(method);
+	BOOL returnsObject = ARIIconTypeMatches(returnType, '@', sizeof(id));
+	free(returnType);
+	if(!returnsObject) return nil;
+
+	return ((id (*)(id, SEL))objc_msgSend)(object, selector);
+}
+
+static id ARIIconControllerSharedInstance(void) {
+	Class controllerClass = objc_getClass("SBIconController");
+	return [controllerClass respondsToSelector:@selector(sharedInstance)]
+		? [controllerClass sharedInstance]
+		: nil;
+}
 
 @interface SBIconImageView : UIView
-@property (readonly, nonatomic) SBIcon *icon;
-@property (nonatomic, readwrite) SBIconView *iconView;
-@end
-
-@interface SBFolder : NSObject
-@property (nonatomic, strong) NSArray *lists;
-@property (nonatomic, strong) id firstList;
-@end
-
-@interface SBIconListModel (ARIGriddyCompat)
-- (void)setGriddyShouldPatch:(BOOL)value;
-@end
-
-@interface SBFolderIcon : SBIcon
-@property (nonatomic, strong) SBFolder *folder;
 @end
 
 @interface SBFolderIconImageView : SBIconImageView
 @end
-
-@interface _SBFolderPageElement : NSObject
-@property (nonatomic) NSUInteger pageIndex;
-@property (weak, nonatomic) SBFolderIcon *folderIcon;
-@end
-
-@interface _SBIconGridWrapperView : UIImageView
-@property (retain, nonatomic) _SBFolderPageElement *element;
-@property (nonatomic, readwrite) SBFolderIconImageView *folderIconImageView;
-@end
-
-static BOOL ARIStringLooksLikeLibrary(NSString *string) {
-	return [string containsString:@"SBHLibrary"] ||
-		   [string containsString:@"AppLibrary"] ||
-		   [string containsString:@"LibraryAdditionalItemsIndicator"] ||
-		   [string containsString:@"CategoryPod"];
-}
-
-static BOOL ARIObjectHierarchyLooksLikeLibrary(id object) {
-	id current = object;
-	while(current && [current isKindOfClass:[UIView class]]) {
-		NSString *className = NSStringFromClass([current class]);
-		if(ARIStringLooksLikeLibrary(className)) return YES;
-		current = [(UIView *)current superview];
-	}
-	return NO;
-}
-
-static BOOL ARIIconLooksLikeAppLibrary(id icon) {
-	if(!icon) return NO;
-
-	@try {
-		id location = [icon valueForKey:@"location"];
-		if([location isKindOfClass:[NSString class]] &&
-		   (IsLocationAppLibrary(location) || IsLocationAppLibraryPod(location))) {
-			return YES;
-		}
-	} @catch(__unused NSException *exception) {}
-
-	@try {
-		id folder = [icon valueForKey:@"folder"];
-		NSString *folderClassName = NSStringFromClass([folder class]);
-		if(ARIStringLooksLikeLibrary(folderClassName)) return YES;
-	} @catch(__unused NSException *exception) {}
-
-	return ARIStringLooksLikeLibrary(NSStringFromClass([icon class]));
-}
-
-static BOOL ARIShouldBypassGriddyForAppLibraryFolderImageView(SBFolderIconImageView *view) {
-	if(![[ARITweakManager sharedInstance] isGriddyInstalled] || !view) return NO;
-	if(ARIObjectHierarchyLooksLikeLibrary(view)) return YES;
-	return ARIIconLooksLikeAppLibrary(view.icon);
-}
-
-static id ARIModelForFolderPageElement(_SBFolderPageElement *element) {
-	if(!element) return nil;
-	SBFolderIcon *folderIcon = element.folderIcon;
-	SBFolder *folder = folderIcon.folder;
-	if(!folder) return nil;
-
-	NSArray *lists = folder.lists;
-	NSUInteger pageIndex = element.pageIndex;
-	if([lists isKindOfClass:[NSArray class]] && pageIndex < lists.count) {
-		return lists[pageIndex];
-	}
-
-	return folder.firstList;
-}
-
-static void ARIDisableGriddyForModel(id model) {
-	if([model respondsToSelector:@selector(setGriddyShouldPatch:)]) {
-		@try {
-			[model setGriddyShouldPatch:NO];
-		} @catch(__unused NSException *exception) {}
-	}
-}
-
-static BOOL ARIShouldBypassGriddyForAppLibraryGridWrapper(_SBIconGridWrapperView *view) {
-	if(![[ARITweakManager sharedInstance] isGriddyInstalled] || !view) return NO;
-	if(ARIObjectHierarchyLooksLikeLibrary(view)) return YES;
-	if(ARIShouldBypassGriddyForAppLibraryFolderImageView(view.folderIconImageView)) return YES;
-	return ARIIconLooksLikeAppLibrary(view.element.folderIcon);
-}
 
 @interface SBSApplicationShortcutIcon : NSObject
 @end
@@ -119,16 +87,32 @@ static BOOL ARIShouldBypassGriddyForAppLibraryGridWrapper(_SBIconGridWrapperView
 @interface SBSApplicationShortcutItem : NSObject
 @property (nonatomic, retain) NSString *type;
 @property (nonatomic, copy) NSString *localizedTitle;
-@property (nonatomic, copy) SBSApplicationShortcutIcon *icon;
-@property (nonatomic, copy) NSString *bundleIdentifierToLaunch;
 - (void)setIcon:(SBSApplicationShortcutIcon *)arg1;
 @end
 
 @interface SBSApplicationShortcutCustomImageIcon : SBSApplicationShortcutIcon
-@property (nonatomic, readwrite) BOOL isTemplate;   
 - (id)initWithImagePNGData:(id)arg1;
-- (BOOL)isTemplate;
 @end
+
+@interface SBHIconViewApplicationShortcutsContextMenuProvider : NSObject
++ (void)activateShortcut:(SBSApplicationShortcutItem *)item
+	withBundleIdentifier:(NSString *)bundleID
+	forIconView:(SBIconView *)iconView;
+@end
+
+static BOOL ARIHandleEditorShortcut(SBSApplicationShortcutItem *item) {
+	id rawType = ARIObjectByCallingNoArgumentSelector(item, @selector(type));
+	if(![rawType isKindOfClass:[NSString class]]) return NO;
+
+	NSString *type = (NSString *)rawType;
+	NSString *prefix = @"me.lau.atria.edit.";
+	if(![type hasPrefix:prefix] || type.length <= prefix.length) return NO;
+
+	NSString *location = [type substringFromIndex:prefix.length];
+	[[ARIEditManager sharedInstance] toggleEditView:YES
+							  withTargetLocation:location];
+	return YES;
+}
 
 %hook SBIconView
 // I hope this doesn't cause issues
@@ -182,9 +166,14 @@ static BOOL ARIShouldBypassGriddyForAppLibraryGridWrapper(_SBIconGridWrapperView
 	ARITweakManager *manager = [ARITweakManager sharedInstance];
 	CATransform3D old = self.layer.sublayerTransform;
 
-	// Use containsString because we need to check for the suggestions location too
-	BOOL inDock = IconIsInDock(self) || [self.location containsString:@"Floating"];
-	if(!(inDock || IconIsInRoot(self) || (IconIsInFolder(self) && [manager boolValueForKey:@"scaleInsideFolders"]))) {
+	// Scale only SpringBoard's concrete user/suggestions Dock locations. A
+	// substring match could accidentally classify an independently managed
+	// custom icon location as Atria's Dock.
+	BOOL inDock = IconIsInDock(self) || IconIsInFloatingDockContent(self);
+	BOOL inRoot = IconIsInRoot(self);
+	BOOL scaleFolder = IconIsInFolder(self) &&
+		[manager boolValueForKey:@"scaleInsideFolders"];
+	if(!(inDock || inRoot || scaleFolder)) {
 		if(old.m11 != 1 || old.m22 != 1) self.layer.sublayerTransform = CATransform3DMakeScale(1, 1, 1);
 		return;
 	}
@@ -194,10 +183,10 @@ static BOOL ARIShouldBypassGriddyForAppLibraryGridWrapper(_SBIconGridWrapperView
 	if(isWidget) {
 		customScale = [manager floatValueForKey:@"hs_widgetIconScale" forListView:self._atriaLastIconListView];
 	} else {
-		if(IconIsInRoot(self) || (IconIsInFolder(self) && [manager boolValueForKey:@"scaleInsideFolders"])) {
+		if(inRoot || scaleFolder) {
 			customScale = [manager floatValueForKey:@"hs_iconScale" forListView:self._atriaLastIconListView];
 		} else if(inDock) {
-			customScale = [manager floatValueForKey:@"dock_iconScale" forListView:self._atriaLastIconListView];
+			customScale = [manager floatValueForKey:@"dock_iconScale"];
 		}
 	}
 
@@ -244,8 +233,14 @@ static BOOL ARIShouldBypassGriddyForAppLibraryGridWrapper(_SBIconGridWrapperView
 		// Update allowsLabelArea
 		[self setAllowsLabelArea:self.allowsLabelArea];
 	}
-	[self _atriaSetupDropShadow:[[[objc_getClass("SBIconController") sharedInstance] iconManager] isEditing]];
-	[self _updateIconImageViewAnimated:YES];
+	id iconController = ARIIconControllerSharedInstance();
+	SBHIconManager *iconManager = [iconController respondsToSelector:@selector(iconManager)] ? [iconController iconManager] : nil;
+	BOOL isEditing = [iconManager respondsToSelector:@selector(isEditing)] ? iconManager.isEditing : NO;
+	[self _atriaSetupDropShadow:isEditing];
+	// Reapply Atria's transform directly. Calling SpringBoard's private image
+	// refresh selector here would turn a future selector removal into a missing
+	// %orig call merely because the icon changed superviews.
+	[self _atriaUpdateIconContentScale];
 }
 
 - (void)setEditing:(BOOL)editing animated:(BOOL)animated {
@@ -258,22 +253,39 @@ static BOOL ARIShouldBypassGriddyForAppLibraryGridWrapper(_SBIconGridWrapperView
 	if(self.layer.shadowRadius > 0.0F) {
 		CGFloat width = rect.size.width;
 		CGFloat height = rect.size.height;
-		float scale = self.layer.sublayerTransform.m11;
+		CGFloat scaleX = fabs(self.layer.sublayerTransform.m11);
+		CGFloat scaleY = fabs(self.layer.sublayerTransform.m22);
+		if(!isfinite(scaleX)) scaleX = 1.0F;
+		if(!isfinite(scaleY)) scaleY = 1.0F;
+		CGFloat scaledWidth = width * scaleX;
+		CGFloat scaledHeight = height * scaleY;
 		CGRect scaledRect = CGRectInset(rect, 
-			(width - sqrt(width * width * scale)) / 2.0F, 
-			(height - sqrt(height * height * scale)) / 2.0F);
-		self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:scaledRect cornerRadius:[self iconImageCornerRadius]].CGPath;
+			(width - scaledWidth) / 2.0F,
+			(height - scaledHeight) / 2.0F);
+		CGFloat cornerRadius = [self iconImageCornerRadius] * MIN(scaleX, scaleY);
+		self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:scaledRect cornerRadius:cornerRadius].CGPath;
 	}
 }
 
 %new
 - (void)_atriaSetupDropShadow:(BOOL)isEditing {
 	BOOL enabled = [[ARITweakManager sharedInstance] boolValueForKey:@"dropShadow"];
+	// Avoid private-method inspection for the default disabled state and for
+	// cases where Atria cannot apply a stable shadow anyway.
+	if(!enabled || isEditing || IconIsInFloatingDockContent(self)) {
+		self.layer.shadowOpacity = 0.0F;
+		self.layer.shadowRadius = 0.0F;
+		return;
+	}
 	SBIcon *icon = [self icon];
-	BOOL widgetOrAppIcon = [icon application] || [icon isKindOfClass:objc_getClass("SBWidgetIcon")] || [icon isKindOfClass:objc_getClass("SBBookmarkIcon")];
-	// Don't apply shadows in floating dock, because dynamic scaling of the app icons gets weird
-	// Use containsString instead of the macro because we need to check for the suggestions location too
-	if(enabled && !isEditing && widgetOrAppIcon && ![self.location containsString:@"Floating"]) {
+	BOOL isApplicationIcon =
+		ARIObjectByCallingNoArgumentSelector(icon, @selector(application)) != nil;
+	BOOL widgetOrAppIcon = isApplicationIcon ||
+		[icon isKindOfClass:objc_getClass("SBWidgetIcon")] ||
+		[icon isKindOfClass:objc_getClass("SBBookmarkIcon")];
+	// Don't apply shadows in SpringBoard's floating user/suggestions Dock,
+	// because its dynamic icon scaling makes the shadow geometry unstable.
+	if(widgetOrAppIcon) {
 		if(self.layer.shadowRadius > 0.0F) return;
 		self.layer.masksToBounds = NO;
 		self.layer.shadowOpacity = 0.4F;
@@ -336,15 +348,32 @@ static BOOL ARIShouldBypassGriddyForAppLibraryGridWrapper(_SBIconGridWrapperView
 	return items;
 }
 
+%end
+
+%group ARILegacyShortcutActivation
+
+%hook SBIconView
+
 + (void)activateShortcut:(SBSApplicationShortcutItem *)item withBundleIdentifier:(NSString *)bundleID forIconView:(SBIconView *)iconView {
-	NSString *prefix = @"me.lau.atria.edit.";
-	if([[item type] containsString:prefix]) {
-		NSString *loc = [[item type] stringByReplacingOccurrencesOfString:prefix withString:@""];
-		[[ARIEditManager sharedInstance] toggleEditView:YES withTargetLocation:loc];
-	} else {
-		%orig;
-	}
+	if(!ARIHandleEditorShortcut(item)) %orig(item, bundleID, iconView);
 }
+
+%end
+
+
+%end
+
+
+%group ARIModernShortcutActivation
+
+%hook SBHIconViewApplicationShortcutsContextMenuProvider
+
++ (void)activateShortcut:(SBSApplicationShortcutItem *)item withBundleIdentifier:(NSString *)bundleID forIconView:(SBIconView *)iconView {
+	if(!ARIHandleEditorShortcut(item)) %orig(item, bundleID, iconView);
+}
+
+%end
+
 
 %end
 
@@ -376,16 +405,9 @@ static BOOL ARIShouldBypassGriddyForAppLibraryGridWrapper(_SBIconGridWrapperView
 
 %end
 
+%group ARIFolderIconBackgroundView
+
 %hook SBFolderIconImageView
-
-- (CGRect)frameForMiniIconAtIndex:(NSUInteger)arg0 {
-	if(ARIShouldBypassGriddyForAppLibraryFolderImageView(self)) {
-		ARIDisableGriddyForModel(((SBFolderIcon *)self.icon).folder.firstList);
-		return %orig(arg0);
-	}
-
-	return %orig;
-}
 
 - (void)setBackgroundView:(id)arg1 {
 	if([[ARITweakManager sharedInstance] boolValueForKey:@"hideFolderIconBG"]) {
@@ -399,26 +421,6 @@ static BOOL ARIShouldBypassGriddyForAppLibraryGridWrapper(_SBIconGridWrapperView
 
 %end
 
-%hook _SBIconGridWrapperView
-
-- (void)setImage:(UIImage *)image {
-	if(ARIShouldBypassGriddyForAppLibraryGridWrapper(self)) {
-		ARIDisableGriddyForModel(ARIModelForFolderPageElement(self.element));
-		%orig(image);
-		return;
-	}
-
-	%orig;
-}
-
-- (void)layoutSubviews {
-	CGRect originalFrame = self.frame;
-	%orig;
-
-	if(ARIShouldBypassGriddyForAppLibraryGridWrapper(self)) {
-		self.frame = originalFrame;
-	}
-}
 
 %end
 
@@ -426,5 +428,32 @@ static BOOL ARIShouldBypassGriddyForAppLibraryGridWrapper(_SBIconGridWrapperView
 	if([[ARITweakManager sharedInstance] isEnabled]) {
 		NSLog(@"[Atria]: Loading hooks from %s", __FILE__);
 		%init();
+
+		SEL activationSelector =
+			@selector(activateShortcut:withBundleIdentifier:forIconView:);
+		Class legacyActivationClass = objc_getClass("SBIconView");
+		if(ARIIconMethodMatchesVoidObjectABI(
+				legacyActivationClass, activationSelector, YES, 3)) {
+			%init(ARILegacyShortcutActivation);
+		} else {
+			NSLog(@"[Atria]: Skipping legacy shortcut activation hook: incompatible ABI");
+		}
+
+		Class modernActivationClass = objc_getClass(
+			"SBHIconViewApplicationShortcutsContextMenuProvider");
+		if(ARIIconMethodMatchesVoidObjectABI(
+				modernActivationClass, activationSelector, YES, 3)) {
+			%init(ARIModernShortcutActivation);
+		} else {
+			NSLog(@"[Atria]: Skipping modern shortcut activation hook: incompatible ABI");
+		}
+
+		Class folderImageClass = objc_getClass("SBFolderIconImageView");
+		if(ARIIconMethodMatchesVoidObjectABI(
+				folderImageClass, @selector(setBackgroundView:), NO, 1)) {
+			%init(ARIFolderIconBackgroundView);
+		} else {
+			NSLog(@"[Atria]: Skipping folder background hook: incompatible ABI");
+		}
 	}
 }

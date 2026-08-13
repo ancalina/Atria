@@ -11,11 +11,13 @@
 @property (nonatomic, strong) UISlider *slider;
 @property (nonatomic, strong) UILabel *lowerLabel;
 @property (nonatomic, strong) UILabel *upperLabel;
-@property (nonatomic, assign) float lowerLimit;
-@property (nonatomic, assign) float upperLimit;
+@property (nonatomic, readonly, assign) BOOL usesStepButtons;
 - (instancetype)initWithTargetSetting:(NSString *)setting;
 - (void)setupForSettingKey:(NSString *)key;
 - (void)updateSliderValue;
-- (void)updateCurrentText;
+- (NSString *)effectiveSettingKey;
+- (NSString *)stepDisplayText;
+- (UIMenu *)stepSelectionMenuWithHandler:(void (^)(void))handler;
+- (void)updateForCurrentOrientation;
 - (void)endTextEntry;
 @end

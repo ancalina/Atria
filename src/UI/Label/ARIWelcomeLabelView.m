@@ -4,6 +4,7 @@
 //
 
 #import "ARIWelcomeLabelView.h"
+#import "../../Manager/ARIEditManager.h"
 #import "../../Manager/ARITweakManager.h"
 #import "../../Script/ARILabelScriptRunner.h"
 #import "../../../Prefs/src/ARILabelScriptVisualEditorController.h"
@@ -14,6 +15,8 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <math.h>
+#include <stdlib.h>
+#include <string.h>
 
 typedef NS_ENUM(NSUInteger, ARIGreetingPeriod) {
     ARIGreetingPeriodMorning,
@@ -23,6 +26,23 @@ typedef NS_ENUM(NSUInteger, ARIGreetingPeriod) {
 
 static BOOL ARILabelScriptEditorPresentationInFlight = NO;
 
+static const char *ARIUnqualifiedWeatherType(const char *encoding) {
+    while(encoding && *encoding && strchr("rnNoORV", *encoding)) encoding++;
+    return encoding;
+}
+
+static BOOL ARIWeatherMethodHasReturnKind(id object, SEL selector,
+                                          char expectedReturnKind) {
+    if(!object || !selector) return NO;
+    Method method = class_getInstanceMethod(object_getClass(object), selector);
+    if(!method || method_getNumberOfArguments(method) != 2) return NO;
+    char *returnType = method_copyReturnType(method);
+    const char *unqualified = ARIUnqualifiedWeatherType(returnType);
+    BOOL matches = unqualified && *unqualified == expectedReturnKind;
+    free(returnType);
+    return matches;
+}
+
 @implementation ARIWelcomeLabelView {
     NSCalendar *_calendar;
     NSTimer *_updateTimer;
@@ -30,6 +50,8 @@ static BOOL ARILabelScriptEditorPresentationInFlight = NO;
     WALockscreenWidgetViewController *_weatherUpdater;
     ARILabelScriptRunner *_scriptRunner;
     NSString *_loadedScriptSource;
+    NSString *_customGreetingSource;
+    NSArray<NSDictionary *> *_customGreetingTokens;
 }
 
 - (void)_invalidateObserversAndTimer {
@@ -54,7 +76,8 @@ static BOOL ARILabelScriptEditorPresentationInFlight = NO;
 
 - (NSString *)_safeStringFromWeatherUpdaterSelector:(SEL)selector fallback:(NSString *)fallback {
     id weatherUpdater = _weatherUpdater;
-    if(!weatherUpdater || ![weatherUpdater respondsToSelector:selector]) {
+    if(!weatherUpdater || ![weatherUpdater respondsToSelector:selector] ||
+       !ARIWeatherMethodHasReturnKind(weatherUpdater, selector, '@')) {
         return fallback;
     }
 
@@ -71,7 +94,10 @@ static BOOL ARILabelScriptEditorPresentationInFlight = NO;
 
 - (UIImage *)_safeConditionsImage {
     id weatherUpdater = _weatherUpdater;
-    if(!weatherUpdater || ![weatherUpdater respondsToSelector:@selector(_conditionsImage)]) {
+    if(!weatherUpdater ||
+       ![weatherUpdater respondsToSelector:@selector(_conditionsImage)] ||
+       !ARIWeatherMethodHasReturnKind(weatherUpdater,
+                                      @selector(_conditionsImage), '@')) {
         return nil;
     }
 
@@ -117,7 +143,7 @@ static BOOL ARILabelScriptEditorPresentationInFlight = NO;
             continue;
         }
 
-        if(character == '.' && !hasDecimal) {
+        if((character == '.' || character == ',') && !hasDecimal) {
             [filtered appendString:@"."];
             hasDecimal = YES;
         }
@@ -226,9 +252,12 @@ static BOOL ARILabelScriptEditorPresentationInFlight = NO;
         Class weatherClass = objc_getClass("WALockscreenWidgetViewController");
         if(weatherClass) {
             _weatherUpdater = [[weatherClass alloc] init];
-            if([_weatherUpdater respondsToSelector:@selector(updateWeather)]) {
+            if([_weatherUpdater respondsToSelector:@selector(updateWeather)] &&
+               ARIWeatherMethodHasReturnKind(_weatherUpdater,
+                                             @selector(updateWeather), 'v')) {
                 @try {
-                    [_weatherUpdater updateWeather];
+                    ((void (*)(id, SEL))objc_msgSend)(
+                        _weatherUpdater, @selector(updateWeather));
                 } @catch (__unused NSException *exception) {
                 }
             }
@@ -313,20 +342,11 @@ static BOOL ARILabelScriptEditorPresentationInFlight = NO;
     }
 
     [self setCurrentRawText:rawText];
-    self.textField.text = [self processRawText:[self currentRawText] isScheduledUpdate:scheduled];
+    self.textField.text = [self processRawText:rawText isScheduledUpdate:scheduled];
 
     if(shouldSchedule || !_updateTimer) {
         [self _scheduleNextUpdateAfter:nextInterval];
     }
-}
-
-- (NSString *)_stringValueForKey:(NSString *)key fallback:(NSString *)fallback {
-    id value = [[ARITweakManager sharedInstance] rawValueForKey:key];
-    if([value isKindOfClass:[NSString class]] && [((NSString *)value) length] > 0) {
-        return [(NSString *)value copy];
-    }
-
-    return fallback;
 }
 
 - (ARIGreetingPeriod)_greetingPeriodForHour:(NSInteger)hour
@@ -382,10 +402,26 @@ static BOOL ARILabelScriptEditorPresentationInFlight = NO;
 
 - (NSString *)_stringByReplacingCustomGreetingTokensInString:(NSString *)string {
     NSString *result = [string isKindOfClass:[NSString class]] ? [string copy] : @"";
-    NSUserDefaults *preferences = [[NSUserDefaults alloc] initWithSuiteName:ARIPreferenceDomain];
-    NSArray<NSDictionary *> *tokens = [ARICustomGreetingScheduleStore effectiveTokensFromPreferences:preferences];
+    if(![result containsString:@"%"]) return result;
+    NSUserDefaults *preferences = [ARITweakManager sharedInstance].preferences;
+    id storedSource = [preferences objectForKey:ARICustomGreetingTokensPreferenceKey];
+    NSString *source = [storedSource isKindOfClass:[NSString class]] ? storedSource : @"";
+    BOOL hasSerializedSource =
+        [source stringByTrimmingCharactersInSet:
+            NSCharacterSet.whitespaceAndNewlineCharacterSet].length > 0;
+    if(!hasSerializedSource) {
+        // Legacy schedules use independent keys, so an empty serialized source
+        // cannot serve as their cache key.
+        _customGreetingSource = nil;
+        _customGreetingTokens = [ARICustomGreetingScheduleStore
+            effectiveTokensFromPreferences:preferences];
+    } else if(!_customGreetingTokens || ![_customGreetingSource isEqualToString:source]) {
+        _customGreetingSource = [source copy];
+        _customGreetingTokens = [ARICustomGreetingScheduleStore
+            effectiveTokensFromPreferences:preferences];
+    }
 
-    for(NSDictionary *tokenDictionary in tokens) {
+    for(NSDictionary *tokenDictionary in _customGreetingTokens) {
         NSString *rawTokenName = [tokenDictionary[@"name"] isKindOfClass:[NSString class]] ? tokenDictionary[@"name"] : @"";
         NSString *tokenName = [self _sanitizedCustomTokenName:rawTokenName];
         if([tokenName length] == 0) {
@@ -426,15 +462,23 @@ static BOOL ARILabelScriptEditorPresentationInFlight = NO;
 
     NSString *temperature = @"--";
     NSString *locationName = @"알 수 없음";
-    NSString *batteryPercentage = [self _batteryPercentageString];
-    NSString *weekday = [self _currentWeekdayString];
-    NSString *currentTime = [self _currentTimeString];
-    BOOL wantsWeatherText = [text containsString:@"\%TEMPERATURE\%"] ||
-                            [text containsString:@"\%ONDO\%"] ||
-                            [text containsString:@"\%온도\%"] ||
-                            [text containsString:@"\%LOCATION\%"] ||
-                            [text containsString:@"\%WHICH\%"] ||
-                            [text containsString:@"\%위치\%"];
+    BOOL wantsBattery = [text containsString:@"%BATTERY%"] ||
+                        [text containsString:@"%배터리%"];
+    NSString *batteryPercentage = wantsBattery ? [self _batteryPercentageString] : @"";
+    BOOL wantsWeekday = [text containsString:@"%DAY%"] ||
+                        [text containsString:@"%WEEKDAY%"] ||
+                        [text containsString:@"%요일%"];
+    BOOL wantsTime = [text containsString:@"%TIME%"] ||
+                     [text containsString:@"%시각%"] ||
+                     [text containsString:@"%시간%"];
+    NSString *weekday = wantsWeekday ? [self _currentWeekdayString] : @"";
+    NSString *currentTime = wantsTime ? [self _currentTimeString] : @"";
+    BOOL wantsWeatherText = [text containsString:@"%TEMPERATURE%"] ||
+                            [text containsString:@"%ONDO%"] ||
+                            [text containsString:@"%온도%"] ||
+                            [text containsString:@"%LOCATION%"] ||
+                            [text containsString:@"%WHICH%"] ||
+                            [text containsString:@"%위치%"];
 
     if(wantsWeatherText || [[ARITweakManager sharedInstance] boolValueForKey:@"showWeatherIcon"]) {
         temperature = [self _safeStringFromWeatherUpdaterSelector:@selector(_temperature) fallback:@"--"];
@@ -444,50 +488,29 @@ static BOOL ARILabelScriptEditorPresentationInFlight = NO;
         _imageView.image = nil;
     }
 
-    text = [text stringByReplacingOccurrencesOfString:@"\%GREETING\%" withString:greeting];
-    text = [text stringByReplacingOccurrencesOfString:@"\%GREETING_KR\%" withString:greetingKR];
-    text = [text stringByReplacingOccurrencesOfString:@"\%인삿말_한\%" withString:greetingKR];
-    text = [text stringByReplacingOccurrencesOfString:@"\%인삿말_영\%" withString:greeting];
-    text = [text stringByReplacingOccurrencesOfString:@"\%TEMPERATURE\%" withString:temperature];
-    text = [text stringByReplacingOccurrencesOfString:@"\%ONDO\%" withString:temperature];
-    text = [text stringByReplacingOccurrencesOfString:@"\%온도\%" withString:temperature];
-    text = [text stringByReplacingOccurrencesOfString:@"\%LOCATION\%" withString:locationName];
-    text = [text stringByReplacingOccurrencesOfString:@"\%WHICH\%" withString:locationName];
-    text = [text stringByReplacingOccurrencesOfString:@"\%위치\%" withString:locationName];
-    text = [text stringByReplacingOccurrencesOfString:@"\%BATTERY\%" withString:batteryPercentage];
-    text = [text stringByReplacingOccurrencesOfString:@"\%배터리\%" withString:batteryPercentage];
-    text = [text stringByReplacingOccurrencesOfString:@"\%DAY\%" withString:weekday];
-    text = [text stringByReplacingOccurrencesOfString:@"\%WEEKDAY\%" withString:weekday];
-    text = [text stringByReplacingOccurrencesOfString:@"\%요일\%" withString:weekday];
-    text = [text stringByReplacingOccurrencesOfString:@"\%TIME\%" withString:currentTime];
-    text = [text stringByReplacingOccurrencesOfString:@"\%시각\%" withString:currentTime];
-    text = [text stringByReplacingOccurrencesOfString:@"\%시간\%" withString:currentTime];
+    text = [text stringByReplacingOccurrencesOfString:@"%GREETING%" withString:greeting];
+    text = [text stringByReplacingOccurrencesOfString:@"%GREETING_KR%" withString:greetingKR];
+    text = [text stringByReplacingOccurrencesOfString:@"%인삿말_한%" withString:greetingKR];
+    text = [text stringByReplacingOccurrencesOfString:@"%인삿말_영%" withString:greeting];
+    text = [text stringByReplacingOccurrencesOfString:@"%TEMPERATURE%" withString:temperature];
+    text = [text stringByReplacingOccurrencesOfString:@"%ONDO%" withString:temperature];
+    text = [text stringByReplacingOccurrencesOfString:@"%온도%" withString:temperature];
+    text = [text stringByReplacingOccurrencesOfString:@"%LOCATION%" withString:locationName];
+    text = [text stringByReplacingOccurrencesOfString:@"%WHICH%" withString:locationName];
+    text = [text stringByReplacingOccurrencesOfString:@"%위치%" withString:locationName];
+    text = [text stringByReplacingOccurrencesOfString:@"%BATTERY%" withString:batteryPercentage];
+    text = [text stringByReplacingOccurrencesOfString:@"%배터리%" withString:batteryPercentage];
+    text = [text stringByReplacingOccurrencesOfString:@"%DAY%" withString:weekday];
+    text = [text stringByReplacingOccurrencesOfString:@"%WEEKDAY%" withString:weekday];
+    text = [text stringByReplacingOccurrencesOfString:@"%요일%" withString:weekday];
+    text = [text stringByReplacingOccurrencesOfString:@"%TIME%" withString:currentTime];
+    text = [text stringByReplacingOccurrencesOfString:@"%시각%" withString:currentTime];
+    text = [text stringByReplacingOccurrencesOfString:@"%시간%" withString:currentTime];
     return text;
 }
 
 - (void)saveTextValue:(NSString *)text {
     [[ARITweakManager sharedInstance] setValue:text forKey:@"labelText"];
-}
-
-- (UIViewController *)_visibleViewControllerFromController:(UIViewController *)controller {
-    UIViewController *current = controller;
-    while(current) {
-        UIViewController *next = nil;
-        if(current.presentedViewController) {
-            next = current.presentedViewController;
-        } else if([current isKindOfClass:[UINavigationController class]]) {
-            next = ((UINavigationController *)current).visibleViewController;
-        } else if([current isKindOfClass:[UITabBarController class]]) {
-            next = ((UITabBarController *)current).selectedViewController;
-        }
-
-        if(!next || next == current) {
-            return current;
-        }
-        current = next;
-    }
-
-    return controller;
 }
 
 - (BOOL)_controllerContainsScriptEditor:(UIViewController *)controller {
@@ -509,8 +532,7 @@ static BOOL ARILabelScriptEditorPresentationInFlight = NO;
         return;
     }
 
-    UIWindow *window = [UIApplication sharedApplication].keyWindow ?: [UIApplication sharedApplication].windows.firstObject;
-    UIViewController *presenter = [self _visibleViewControllerFromController:window.rootViewController];
+    UIViewController *presenter = ARIHomeScreenPresenter();
     if(!presenter) {
         return;
     }
@@ -539,8 +561,12 @@ static BOOL ARILabelScriptEditorPresentationInFlight = NO;
     }
 
     ARILabelScriptVisualEditorController *controller = [[ARILabelScriptVisualEditorController alloc] initRootControllerWithScript:script];
+    controller.dismissalHandler = ^{
+        [ARITweakManager presentFloatingDockIfPossible];
+    };
     UINavigationController *navigationController = [[UINavigationController alloc] initWithRootViewController:controller];
     navigationController.modalPresentationStyle = UIModalPresentationFormSheet;
+    navigationController.modalInPresentation = YES;
     ARILabelScriptEditorPresentationInFlight = YES;
     [presenter presentViewController:navigationController animated:YES completion:^{
         ARILabelScriptEditorPresentationInFlight = NO;

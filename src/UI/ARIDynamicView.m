@@ -28,16 +28,18 @@
 - (void)updateAnchors {
 }
 
-- (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id)coordinator {
-    // On rotate or frame update
-    [self updateAnchors];
-}
-
 + (UIColor *)colorFromHexString:(NSString *)str withAlpha:(CGFloat)alpha {
-    str = [str stringByReplacingOccurrencesOfString:@"#" withString:@"0x"];
-    NSScanner *scanner = [NSScanner scannerWithString:str];
-    unsigned int hexCode;
-    [scanner scanHexInt:&hexCode];
+    if(![str isKindOfClass:[NSString class]]) return UIColorFromHexValue(0xFFFFFF, alpha);
+    NSString *hex = [str stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if([hex hasPrefix:@"#"]) hex = [hex substringFromIndex:1];
+    else if([hex hasPrefix:@"0x"] || [hex hasPrefix:@"0X"]) hex = [hex substringFromIndex:2];
+    if(hex.length != 6) return UIColorFromHexValue(0xFFFFFF, alpha);
+
+    NSScanner *scanner = [NSScanner scannerWithString:hex];
+    unsigned int hexCode = 0xFFFFFF;
+    if(![scanner scanHexInt:&hexCode] || !scanner.isAtEnd) {
+        return UIColorFromHexValue(0xFFFFFF, alpha);
+    }
     return UIColorFromHexValue(hexCode, alpha);
 }
 

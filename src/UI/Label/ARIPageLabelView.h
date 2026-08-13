@@ -6,5 +6,4 @@
 #import "ARILabelView.h"
 
 @interface ARIPageLabelView : ARILabelView
-- (instancetype)init;
 @end

@@ -208,9 +208,12 @@ NSString *const ARICustomGreetingTokensPreferenceKey = @"customGreetingTokensSou
 }
 
 + (NSArray<NSDictionary *> *)_legacyEntriesForTokenSlot:(NSInteger)slot preferences:(NSUserDefaults *)preferences {
-    NSInteger morningStart = [[preferences objectForKey:@"customGreetingMorningStartHour"] respondsToSelector:@selector(integerValue)] ? [[preferences objectForKey:@"customGreetingMorningStartHour"] integerValue] : 4;
-    NSInteger afternoonStart = [[preferences objectForKey:@"customGreetingAfternoonStartHour"] respondsToSelector:@selector(integerValue)] ? [[preferences objectForKey:@"customGreetingAfternoonStartHour"] integerValue] : 12;
-    NSInteger eveningStart = [[preferences objectForKey:@"customGreetingEveningStartHour"] respondsToSelector:@selector(integerValue)] ? [[preferences objectForKey:@"customGreetingEveningStartHour"] integerValue] : 18;
+    id morningStartValue = [preferences objectForKey:@"customGreetingMorningStartHour"];
+    id afternoonStartValue = [preferences objectForKey:@"customGreetingAfternoonStartHour"];
+    id eveningStartValue = [preferences objectForKey:@"customGreetingEveningStartHour"];
+    NSInteger morningStart = [morningStartValue respondsToSelector:@selector(integerValue)] ? [morningStartValue integerValue] : 4;
+    NSInteger afternoonStart = [afternoonStartValue respondsToSelector:@selector(integerValue)] ? [afternoonStartValue integerValue] : 12;
+    NSInteger eveningStart = [eveningStartValue respondsToSelector:@selector(integerValue)] ? [eveningStartValue integerValue] : 18;
     if(!(morningStart < afternoonStart && afternoonStart < eveningStart)) {
         morningStart = 4;
         afternoonStart = 12;
@@ -218,9 +221,12 @@ NSString *const ARICustomGreetingTokensPreferenceKey = @"customGreetingTokensSou
     }
 
     NSString *prefix = [NSString stringWithFormat:@"customGreetingToken%ld", (long)slot];
-    NSString *morningText = [[preferences objectForKey:[prefix stringByAppendingString:@"MorningText"]] isKindOfClass:[NSString class]] ? [preferences objectForKey:[prefix stringByAppendingString:@"MorningText"]] : @"";
-    NSString *afternoonText = [[preferences objectForKey:[prefix stringByAppendingString:@"AfternoonText"]] isKindOfClass:[NSString class]] ? [preferences objectForKey:[prefix stringByAppendingString:@"AfternoonText"]] : @"";
-    NSString *eveningText = [[preferences objectForKey:[prefix stringByAppendingString:@"EveningText"]] isKindOfClass:[NSString class]] ? [preferences objectForKey:[prefix stringByAppendingString:@"EveningText"]] : @"";
+    id morningTextValue = [preferences objectForKey:[prefix stringByAppendingString:@"MorningText"]];
+    id afternoonTextValue = [preferences objectForKey:[prefix stringByAppendingString:@"AfternoonText"]];
+    id eveningTextValue = [preferences objectForKey:[prefix stringByAppendingString:@"EveningText"]];
+    NSString *morningText = [morningTextValue isKindOfClass:[NSString class]] ? morningTextValue : @"";
+    NSString *afternoonText = [afternoonTextValue isKindOfClass:[NSString class]] ? afternoonTextValue : @"";
+    NSString *eveningText = [eveningTextValue isKindOfClass:[NSString class]] ? eveningTextValue : @"";
 
     BOOL hasLegacyText = morningText.length > 0 || afternoonText.length > 0 || eveningText.length > 0;
     if(!hasLegacyText) {
@@ -240,7 +246,8 @@ NSString *const ARICustomGreetingTokensPreferenceKey = @"customGreetingTokensSou
 
     for(NSInteger slot = 1; slot <= 3; slot++) {
         NSString *nameKey = [NSString stringWithFormat:@"customGreetingToken%ldName", (long)slot];
-        NSString *tokenName = [[preferences objectForKey:nameKey] isKindOfClass:[NSString class]] ? [preferences objectForKey:nameKey] : @"";
+        id tokenNameValue = [preferences objectForKey:nameKey];
+        NSString *tokenName = [tokenNameValue isKindOfClass:[NSString class]] ? tokenNameValue : @"";
         NSArray<NSDictionary *> *entries = [self _legacyEntriesForTokenSlot:slot preferences:preferences];
         if(tokenName.length == 0 && entries.count == 0) {
             continue;
@@ -257,22 +264,24 @@ NSString *const ARICustomGreetingTokensPreferenceKey = @"customGreetingTokensSou
 }
 
 + (NSArray<NSDictionary *> *)effectiveTokensFromPreferences:(NSUserDefaults *)preferences {
-    NSString *source = [[preferences objectForKey:ARICustomGreetingTokensPreferenceKey] isKindOfClass:[NSString class]] ? [preferences objectForKey:ARICustomGreetingTokensPreferenceKey] : @"";
+    id storedSource = [preferences objectForKey:ARICustomGreetingTokensPreferenceKey];
+    NSString *source = [storedSource isKindOfClass:[NSString class]] ? storedSource : @"";
     NSString *trimmedSource = [source stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    NSArray<NSDictionary *> *tokens = [self tokenDictionariesFromSource:source error:nil];
-    if(trimmedSource.length > 0 && tokens) {
-        return tokens;
+    if(trimmedSource.length > 0) {
+        NSArray<NSDictionary *> *tokens = [self tokenDictionariesFromSource:source error:nil];
+        if(tokens) return tokens;
     }
 
     return [self _legacyTokensFromPreferences:preferences];
 }
 
 + (NSArray<NSMutableDictionary *> *)editableTokensFromPreferences:(NSUserDefaults *)preferences {
-    NSString *source = [[preferences objectForKey:ARICustomGreetingTokensPreferenceKey] isKindOfClass:[NSString class]] ? [preferences objectForKey:ARICustomGreetingTokensPreferenceKey] : @"";
+    id storedSource = [preferences objectForKey:ARICustomGreetingTokensPreferenceKey];
+    NSString *source = [storedSource isKindOfClass:[NSString class]] ? storedSource : @"";
     NSString *trimmedSource = [source stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    NSArray<NSMutableDictionary *> *tokens = [self mutableTokenDictionariesFromSource:source error:nil];
-    if(trimmedSource.length > 0 && tokens) {
-        return tokens;
+    if(trimmedSource.length > 0) {
+        NSArray<NSMutableDictionary *> *tokens = [self mutableTokenDictionariesFromSource:source error:nil];
+        if(tokens) return tokens;
     }
 
     NSMutableArray<NSMutableDictionary *> *mutableTokens = [NSMutableArray array];
@@ -310,16 +319,6 @@ NSString *const ARICustomGreetingTokensPreferenceKey = @"customGreetingTokensSou
     NSInteger hours = totalMinutes / 60;
     NSInteger minutes = totalMinutes % 60;
     return [NSString stringWithFormat:@"%02ld:%02ld", (long)hours, (long)minutes];
-}
-
-+ (NSString *)displayTextForEntry:(NSDictionary *)entry {
-    NSString *time = [self formattedTimeValue:[entry[@"start"] respondsToSelector:@selector(doubleValue)] ? [entry[@"start"] doubleValue] : 0.0];
-    NSString *text = [entry[@"text"] isKindOfClass:[NSString class]] ? entry[@"text"] : @"";
-    if(text.length == 0) {
-        text = @"비어 있음";
-    }
-
-    return [NSString stringWithFormat:@"%@  %@", time, text];
 }
 
 @end

@@ -3,13 +3,45 @@
 //
 
 #import "ARILabelScriptCompiler.h"
+#import <CoreFoundation/CoreFoundation.h>
+#include <math.h>
 
 NSString *const ARILabelScriptErrorDomain = @"me.lau.Atria.LabelScript";
+NSUInteger const ARILabelScriptMaximumSourceBytes = 256 * 1024;
+NSUInteger const ARILabelScriptMaximumBlocks = 2048;
+NSUInteger const ARILabelScriptMaximumConditions = 1024;
+NSUInteger const ARILabelScriptMaximumNestingDepth = 32;
+NSUInteger const ARILabelScriptMaximumStepsPerContainer = 512;
+NSUInteger const ARILabelScriptMaximumTextLength = 4096;
+NSUInteger const ARILabelScriptMaximumQueryLength = 256;
+NSTimeInterval const ARILabelScriptMaximumWaitSeconds = 24.0 * 60.0 * 60.0;
+NSInteger const ARILabelScriptMaximumRepeatCount = 10000;
 
 typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
     ARILabelScriptErrorCodeParse = 1,
     ARILabelScriptErrorCodeValidation = 2,
 };
+
+@interface ARILabelScriptValidationState : NSObject
+@property (nonatomic, assign) NSUInteger blockCount;
+@property (nonatomic, assign) NSUInteger conditionCount;
+@end
+
+@implementation ARILabelScriptValidationState
+@end
+
+@interface ARILabelScriptCompiler ()
++ (BOOL)_validateSteps:(NSArray *)steps
+                  path:(NSString *)path
+                 depth:(NSUInteger)depth
+                 state:(ARILabelScriptValidationState *)state
+                 error:(NSError **)error;
++ (BOOL)_validateCondition:(NSDictionary *)condition
+                      path:(NSString *)path
+                     depth:(NSUInteger)depth
+                     state:(ARILabelScriptValidationState *)state
+                     error:(NSError **)error;
+@end
 
 @implementation ARILabelScriptCompiler
 
@@ -19,62 +51,109 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
                            userInfo:@{ NSLocalizedDescriptionKey: description ?: @"알 수 없는 오류" }];
 }
 
-+ (BOOL)_validateHourValue:(id)value path:(NSString *)path error:(NSError **)error {
-    if(![value respondsToSelector:@selector(doubleValue)]) {
-        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
-                                     description:[NSString stringWithFormat:@"%@ must be a number.", path]];
++ (BOOL)_readFiniteDouble:(id)value result:(double *)result {
+    double number = 0.0;
+    if([value isKindOfClass:[NSNumber class]]) {
+        if(CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()) {
+            return NO;
+        }
+        number = [value doubleValue];
+    } else if([value isKindOfClass:[NSString class]]) {
+        // OpenStep property lists represent scalar values as strings. Accept those
+        // for source compatibility, but reject partial values such as "12px".
+        NSString *text = [(NSString *)value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if(text.length == 0) return NO;
+        NSScanner *scanner = [NSScanner scannerWithString:text];
+        scanner.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+        if(![scanner scanDouble:&number] || ![scanner isAtEnd]) return NO;
+    } else {
         return NO;
     }
 
-    double hour = [value doubleValue];
-    if(hour < 0.0 || hour > 24.0) {
-        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
-                                     description:[NSString stringWithFormat:@"%@ must be between 0 and 24.", path]];
-        return NO;
-    }
-
+    if(!isfinite(number)) return NO;
+    if(result) *result = number;
     return YES;
 }
 
-+ (BOOL)_validateNumericValue:(id)value path:(NSString *)path error:(NSError **)error {
-    if(![value respondsToSelector:@selector(doubleValue)]) {
-        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
-                                     description:[NSString stringWithFormat:@"%@ must be a number.", path]];
++ (BOOL)_readInteger:(id)value result:(NSInteger *)result {
+    double number = 0.0;
+    if(![self _readFiniteDouble:value result:&number] || trunc(number) != number ||
+       number < -1000000000.0 || number > 1000000000.0) {
         return NO;
     }
-
+    if(result) *result = (NSInteger)number;
     return YES;
 }
 
-+ (BOOL)_validatePercentageValue:(id)value path:(NSString *)path error:(NSError **)error {
-    if(![self _validateNumericValue:value path:path error:error]) {
-        return NO;
++ (BOOL)_readBoolean:(id)value result:(BOOL *)result {
+    if([value isKindOfClass:[NSNumber class]]) {
+        double number = [value doubleValue];
+        if(!isfinite(number) || (number != 0.0 && number != 1.0)) return NO;
+        if(result) *result = number != 0.0;
+        return YES;
     }
+    if([value isKindOfClass:[NSString class]]) {
+        NSString *text = [[(NSString *)value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] lowercaseString];
+        if([text isEqualToString:@"yes"] || [text isEqualToString:@"true"] || [text isEqualToString:@"1"]) {
+            if(result) *result = YES;
+            return YES;
+        }
+        if([text isEqualToString:@"no"] || [text isEqualToString:@"false"] || [text isEqualToString:@"0"]) {
+            if(result) *result = NO;
+            return YES;
+        }
+    }
+    return NO;
+}
 
-    double percentage = [value doubleValue];
-    if(percentage < 0.0 || percentage > 100.0) {
++ (BOOL)_validateDouble:(id)value
+                    path:(NSString *)path
+                 minimum:(double)minimum
+                 maximum:(double)maximum
+                   error:(NSError **)error {
+    double number = 0.0;
+    if(![self _readFiniteDouble:value result:&number]) {
         if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
-                                     description:[NSString stringWithFormat:@"%@ must be between 0 and 100.", path]];
+                                     description:[NSString stringWithFormat:@"%@ must be a finite number.", path]];
         return NO;
     }
-
+    if(number < minimum || number > maximum) {
+        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
+                                     description:[NSString stringWithFormat:@"%@ must be between %g and %g.", path, minimum, maximum]];
+        return NO;
+    }
     return YES;
 }
 
-+ (BOOL)_validateNonEmptyString:(id)value path:(NSString *)path error:(NSError **)error {
++ (BOOL)_validateNonEmptyString:(id)value maximumLength:(NSUInteger)maximumLength path:(NSString *)path error:(NSError **)error {
     if(![value isKindOfClass:[NSString class]] || [((NSString *)value) length] == 0) {
         if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
                                      description:[NSString stringWithFormat:@"%@ must be a non-empty string.", path]];
         return NO;
     }
-
+    if([((NSString *)value) length] > maximumLength) {
+        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
+                                     description:[NSString stringWithFormat:@"%@ exceeds the %lu-character limit.", path, (unsigned long)maximumLength]];
+        return NO;
+    }
     return YES;
 }
 
-+ (BOOL)_validateBlock:(NSDictionary *)block path:(NSString *)path error:(NSError **)error {
++ (BOOL)_validateBlock:(NSDictionary *)block
+                   path:(NSString *)path
+                  depth:(NSUInteger)depth
+                  state:(ARILabelScriptValidationState *)state
+                  error:(NSError **)error {
     if(![block isKindOfClass:[NSDictionary class]]) {
         if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
                                      description:[NSString stringWithFormat:@"%@ must be a dictionary.", path]];
+        return NO;
+    }
+
+    state.blockCount++;
+    if(state.blockCount > ARILabelScriptMaximumBlocks) {
+        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
+                                     description:[NSString stringWithFormat:@"Script exceeds the %lu-block limit.", (unsigned long)ARILabelScriptMaximumBlocks]];
         return NO;
     }
 
@@ -91,23 +170,20 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
                                          description:[NSString stringWithFormat:@"%@.text must be a string.", path]];
             return NO;
         }
+        if([block[@"text"] length] > ARILabelScriptMaximumTextLength) {
+            if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
+                                         description:[NSString stringWithFormat:@"%@.text exceeds the %lu-character limit.", path, (unsigned long)ARILabelScriptMaximumTextLength]];
+            return NO;
+        }
         return YES;
     }
 
     if([type isEqualToString:@"wait"]) {
-        id seconds = block[@"seconds"];
-        if(![seconds respondsToSelector:@selector(doubleValue)]) {
-            if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
-                                         description:[NSString stringWithFormat:@"%@.seconds must be a number.", path]];
-            return NO;
-        }
-
-        if([seconds doubleValue] < 0.0) {
-            if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
-                                         description:[NSString stringWithFormat:@"%@.seconds cannot be negative.", path]];
-            return NO;
-        }
-        return YES;
+        return [self _validateDouble:block[@"seconds"]
+                                path:[path stringByAppendingString:@".seconds"]
+                             minimum:0.0
+                             maximum:ARILabelScriptMaximumWaitSeconds
+                               error:error];
     }
 
     if([type isEqualToString:@"reload"]) {
@@ -130,9 +206,9 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
             return NO;
         }
 
-        if(![self _validateCondition:condition path:[path stringByAppendingString:@".condition"] error:error]) return NO;
-        if(thenSteps && ![self _validateSteps:thenSteps path:[path stringByAppendingString:@".then"] error:error]) return NO;
-        if(elseSteps && ![self _validateSteps:elseSteps path:[path stringByAppendingString:@".else"] error:error]) return NO;
+        if(![self _validateCondition:condition path:[path stringByAppendingString:@".condition"] depth:0 state:state error:error]) return NO;
+        if(thenSteps && ![self _validateSteps:thenSteps path:[path stringByAppendingString:@".then"] depth:depth + 1 state:state error:error]) return NO;
+        if(elseSteps && ![self _validateSteps:elseSteps path:[path stringByAppendingString:@".else"] depth:depth + 1 state:state error:error]) return NO;
         return YES;
     }
 
@@ -145,13 +221,19 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
         }
 
         id times = block[@"times"];
-        if(times && ![times respondsToSelector:@selector(integerValue)]) {
+        NSInteger repeatCount = 0;
+        if(times && ![self _readInteger:times result:&repeatCount]) {
             if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
-                                         description:[NSString stringWithFormat:@"%@.times must be a number when provided.", path]];
+                                         description:[NSString stringWithFormat:@"%@.times must be an integer when provided.", path]];
+            return NO;
+        }
+        if(repeatCount < 0 || repeatCount > ARILabelScriptMaximumRepeatCount) {
+            if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
+                                         description:[NSString stringWithFormat:@"%@.times must be 0 (infinite) or between 1 and %ld.", path, (long)ARILabelScriptMaximumRepeatCount]];
             return NO;
         }
 
-        return [self _validateSteps:steps path:[path stringByAppendingString:@".steps"] error:error];
+        return [self _validateSteps:steps path:[path stringByAppendingString:@".steps"] depth:depth + 1 state:state error:error];
     }
 
     if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
@@ -159,15 +241,34 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
     return NO;
 }
 
-+ (BOOL)_validateSteps:(NSArray *)steps path:(NSString *)path error:(NSError **)error {
++ (BOOL)_validateSteps:(NSArray *)steps
+                  path:(NSString *)path
+                 depth:(NSUInteger)depth
+                 state:(ARILabelScriptValidationState *)state
+                 error:(NSError **)error {
     if(![steps isKindOfClass:[NSArray class]]) {
         if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
                                      description:[NSString stringWithFormat:@"%@ must be an array.", path]];
         return NO;
     }
 
+    if(depth > ARILabelScriptMaximumNestingDepth) {
+        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
+                                     description:[NSString stringWithFormat:@"%@ exceeds the maximum nesting depth of %lu.", path, (unsigned long)ARILabelScriptMaximumNestingDepth]];
+        return NO;
+    }
+    if(steps.count > ARILabelScriptMaximumStepsPerContainer) {
+        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
+                                     description:[NSString stringWithFormat:@"%@ exceeds the %lu-step container limit.", path, (unsigned long)ARILabelScriptMaximumStepsPerContainer]];
+        return NO;
+    }
+
     for(NSUInteger i = 0; i < steps.count; i++) {
-        if(![self _validateBlock:steps[i] path:[NSString stringWithFormat:@"%@[%lu]", path, (unsigned long)i] error:error]) {
+        if(![self _validateBlock:steps[i]
+                           path:[NSString stringWithFormat:@"%@[%lu]", path, (unsigned long)i]
+                          depth:depth
+                          state:state
+                          error:error]) {
             return NO;
         }
     }
@@ -175,10 +276,26 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
     return YES;
 }
 
-+ (BOOL)_validateCondition:(NSDictionary *)condition path:(NSString *)path error:(NSError **)error {
++ (BOOL)_validateCondition:(NSDictionary *)condition
+                      path:(NSString *)path
+                     depth:(NSUInteger)depth
+                     state:(ARILabelScriptValidationState *)state
+                     error:(NSError **)error {
     if(![condition isKindOfClass:[NSDictionary class]]) {
         if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
                                      description:[NSString stringWithFormat:@"%@ must be a dictionary.", path]];
+        return NO;
+    }
+
+    if(depth > ARILabelScriptMaximumNestingDepth) {
+        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
+                                     description:[NSString stringWithFormat:@"%@ exceeds the maximum condition depth of %lu.", path, (unsigned long)ARILabelScriptMaximumNestingDepth]];
+        return NO;
+    }
+    state.conditionCount++;
+    if(state.conditionCount > ARILabelScriptMaximumConditions) {
+        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
+                                     description:[NSString stringWithFormat:@"Script exceeds the %lu-condition limit.", (unsigned long)ARILabelScriptMaximumConditions]];
         return NO;
     }
 
@@ -189,8 +306,8 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
     }
 
     if([type isEqualToString:@"hour_between"]) {
-        if(![self _validateHourValue:condition[@"start"] path:[path stringByAppendingString:@".start"] error:error]) return NO;
-        if(![self _validateHourValue:condition[@"end"] path:[path stringByAppendingString:@".end"] error:error]) return NO;
+        if(![self _validateDouble:condition[@"start"] path:[path stringByAppendingString:@".start"] minimum:0.0 maximum:24.0 error:error]) return NO;
+        if(![self _validateDouble:condition[@"end"] path:[path stringByAppendingString:@".end"] minimum:0.0 maximum:24.0 error:error]) return NO;
         return YES;
     }
 
@@ -203,14 +320,12 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
         }
 
         for(NSUInteger i = 0; i < days.count; i++) {
-            id day = days[i];
-            if(![day respondsToSelector:@selector(integerValue)]) {
+            NSInteger value = 0;
+            if(![self _readInteger:days[i] result:&value]) {
                 if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
-                                             description:[NSString stringWithFormat:@"%@.days[%lu] must be a number.", path, (unsigned long)i]];
+                                             description:[NSString stringWithFormat:@"%@.days[%lu] must be an integer.", path, (unsigned long)i]];
                 return NO;
             }
-
-            NSInteger value = [day integerValue];
             if(value < 1 || value > 7) {
                 if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
                                              description:[NSString stringWithFormat:@"%@.days[%lu] must be between 1 and 7.", path, (unsigned long)i]];
@@ -221,15 +336,15 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
     }
 
     if([type isEqualToString:@"location_contains"] || [type isEqualToString:@"weather_contains"]) {
-        return [self _validateNonEmptyString:condition[@"query"] path:[path stringByAppendingString:@".query"] error:error];
+        return [self _validateNonEmptyString:condition[@"query"] maximumLength:ARILabelScriptMaximumQueryLength path:[path stringByAppendingString:@".query"] error:error];
     }
 
     if([type isEqualToString:@"temperature_above"] || [type isEqualToString:@"temperature_below"]) {
-        return [self _validateNumericValue:condition[@"value"] path:[path stringByAppendingString:@".value"] error:error];
+        return [self _validateDouble:condition[@"value"] path:[path stringByAppendingString:@".value"] minimum:-273.15 maximum:1000.0 error:error];
     }
 
     if([type isEqualToString:@"battery_above"] || [type isEqualToString:@"battery_below"]) {
-        return [self _validatePercentageValue:condition[@"value"] path:[path stringByAppendingString:@".value"] error:error];
+        return [self _validateDouble:condition[@"value"] path:[path stringByAppendingString:@".value"] minimum:0.0 maximum:100.0 error:error];
     }
 
     if([type isEqualToString:@"battery_charging"] || [type isEqualToString:@"battery_connected"]) {
@@ -243,10 +358,17 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
                                          description:[NSString stringWithFormat:@"%@.conditions must be a non-empty array.", path]];
             return NO;
         }
+        if(conditions.count > ARILabelScriptMaximumStepsPerContainer) {
+            if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
+                                         description:[NSString stringWithFormat:@"%@.conditions exceeds the %lu-item limit.", path, (unsigned long)ARILabelScriptMaximumStepsPerContainer]];
+            return NO;
+        }
 
         for(NSUInteger i = 0; i < conditions.count; i++) {
             if(![self _validateCondition:conditions[i]
                                     path:[NSString stringWithFormat:@"%@.conditions[%lu]", path, (unsigned long)i]
+                                   depth:depth + 1
+                                   state:state
                                    error:error]) {
                 return NO;
             }
@@ -261,7 +383,7 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
                                          description:[NSString stringWithFormat:@"%@.condition must be a dictionary.", path]];
             return NO;
         }
-        return [self _validateCondition:nested path:[path stringByAppendingString:@".condition"] error:error];
+        return [self _validateCondition:nested path:[path stringByAppendingString:@".condition"] depth:depth + 1 state:state error:error];
     }
 
     if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation
@@ -280,6 +402,11 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
     NSData *data = [normalizedSource dataUsingEncoding:NSUTF8StringEncoding];
     if(!data) {
         if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeParse description:@"Failed to encode script source as UTF-8."];
+        return nil;
+    }
+    if(data.length > ARILabelScriptMaximumSourceBytes) {
+        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeParse
+                                     description:[NSString stringWithFormat:@"Script source exceeds the %lu-byte limit.", (unsigned long)ARILabelScriptMaximumSourceBytes]];
         return nil;
     }
 
@@ -320,6 +447,10 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
         return nil;
     }
 
+    BOOL loop = YES;
+    [self _readBoolean:dictionary[@"loop"] result:&loop];
+    dictionary[@"loop"] = @(loop);
+
     return [dictionary copy];
 }
 
@@ -358,12 +489,81 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
     }
 
     id loopValue = script[@"loop"];
-    if(loopValue && ![loopValue respondsToSelector:@selector(boolValue)]) {
-        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation description:@"`loop` must be a boolean or number."];
+    if(loopValue && ![self _readBoolean:loopValue result:nil]) {
+        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeValidation description:@"`loop` must be true/false (YES/NO and 1/0 are also accepted)."];
         return NO;
     }
 
-    return [self _validateSteps:steps path:@"steps" error:error];
+    ARILabelScriptValidationState *state = [ARILabelScriptValidationState new];
+    return [self _validateSteps:steps path:@"steps" depth:0 state:state error:error];
+}
+
++ (BOOL)_stepsGuaranteeYield:(NSArray *)steps {
+    for(NSDictionary *block in steps) {
+        if(![block isKindOfClass:[NSDictionary class]]) continue;
+        NSString *type = [block[@"type"] isKindOfClass:[NSString class]] ? block[@"type"] : @"";
+        if([type isEqualToString:@"wait"]) return YES;
+        if([type isEqualToString:@"reload"]) return NO;
+        if([type isEqualToString:@"repeat"] && [self _stepsGuaranteeYield:[block[@"steps"] isKindOfClass:[NSArray class]] ? block[@"steps"] : @[]]) return YES;
+        if([type isEqualToString:@"if"]) {
+            NSArray *thenSteps = [block[@"then"] isKindOfClass:[NSArray class]] ? block[@"then"] : @[];
+            NSArray *elseSteps = [block[@"else"] isKindOfClass:[NSArray class]] ? block[@"else"] : nil;
+            if(elseSteps && [self _stepsGuaranteeYield:thenSteps] && [self _stepsGuaranteeYield:elseSteps]) return YES;
+        }
+    }
+    return NO;
+}
+
++ (void)_appendDiagnosticsForSteps:(NSArray *)steps path:(NSString *)path warnings:(NSMutableArray<NSString *> *)warnings {
+    for(NSUInteger index = 0; index < steps.count; index++) {
+        NSDictionary *block = [steps[index] isKindOfClass:[NSDictionary class]] ? steps[index] : nil;
+        if(!block) continue;
+        NSString *blockPath = [NSString stringWithFormat:@"%@[%lu]", path, (unsigned long)index];
+        NSString *type = [block[@"type"] isKindOfClass:[NSString class]] ? block[@"type"] : @"";
+
+        if([type isEqualToString:@"repeat"]) {
+            NSArray *nested = [block[@"steps"] isKindOfClass:[NSArray class]] ? block[@"steps"] : @[];
+            NSInteger times = 0;
+            [self _readInteger:block[@"times"] result:&times];
+            if(nested.count == 0) {
+                [warnings addObject:[NSString stringWithFormat:@"%@ 반복 내용이 비어 있습니다.", blockPath]];
+            } else if(times == 0 && ![self _stepsGuaranteeYield:nested]) {
+                [warnings addObject:[NSString stringWithFormat:@"%@ 무한 반복의 일부 경로에 wait가 없어 실행 예산에 의해 주기적으로 중단될 수 있습니다.", blockPath]];
+            }
+            [self _appendDiagnosticsForSteps:nested path:[blockPath stringByAppendingString:@".steps"] warnings:warnings];
+        } else if([type isEqualToString:@"if"]) {
+            NSArray *thenSteps = [block[@"then"] isKindOfClass:[NSArray class]] ? block[@"then"] : @[];
+            NSArray *elseSteps = [block[@"else"] isKindOfClass:[NSArray class]] ? block[@"else"] : nil;
+            if(thenSteps.count == 0) {
+                [warnings addObject:[NSString stringWithFormat:@"%@ 참 분기가 비어 있습니다.", blockPath]];
+            }
+            if(elseSteps && elseSteps.count == 0) {
+                [warnings addObject:[NSString stringWithFormat:@"%@ 거짓 분기가 비어 있습니다.", blockPath]];
+            }
+            [self _appendDiagnosticsForSteps:thenSteps path:[blockPath stringByAppendingString:@".then"] warnings:warnings];
+            if(elseSteps) [self _appendDiagnosticsForSteps:elseSteps path:[blockPath stringByAppendingString:@".else"] warnings:warnings];
+        }
+    }
+}
+
++ (NSArray<NSString *> *)diagnosticsForScriptDictionary:(NSDictionary *)script {
+    NSError *error = nil;
+    if(![self validateScriptDictionary:script error:&error]) {
+        return @[ error.localizedDescription ?: @"스크립트가 유효하지 않습니다." ];
+    }
+
+    NSArray *steps = script[@"steps"];
+    NSMutableArray<NSString *> *warnings = [NSMutableArray new];
+    if(steps.count == 0) {
+        [warnings addObject:@"실행할 액션이 없습니다."];
+    }
+    BOOL loop = YES;
+    [self _readBoolean:script[@"loop"] ?: @YES result:&loop];
+    if(loop && steps.count > 0 && ![self _stepsGuaranteeYield:steps]) {
+        [warnings addObject:@"일부 실행 경로가 wait 없이 루프되어 SpringBoard 실행 예산을 계속 소모할 수 있습니다."];
+    }
+    [self _appendDiagnosticsForSteps:steps path:@"steps" warnings:warnings];
+    return warnings;
 }
 
 + (nullable NSString *)sourceFromScriptDictionary:(NSDictionary *)script error:(NSError **)error {
@@ -375,6 +575,11 @@ typedef NS_ENUM(NSInteger, ARILabelScriptErrorCode) {
                                                    options:NSJSONWritingPrettyPrinted
                                                      error:error];
     if(!data) {
+        return nil;
+    }
+    if(data.length > ARILabelScriptMaximumSourceBytes) {
+        if(error) *error = [self _errorWithCode:ARILabelScriptErrorCodeParse
+                                     description:[NSString stringWithFormat:@"Serialized script exceeds the %lu-byte limit.", (unsigned long)ARILabelScriptMaximumSourceBytes]];
         return nil;
     }
 

@@ -10,10 +10,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, getter=isValid) BOOL valid;
 @property (nonatomic, readonly, getter=hasStarted) BOOL started;
 @property (nonatomic, copy, readonly) NSString *currentTextTemplate;
-@property (nonatomic, copy, readonly) NSString *lastError;
 @property (nonatomic, copy) NSDictionary<NSString *, id> *context;
 - (BOOL)loadSource:(NSString *)source;
-- (void)reset;
 - (NSTimeInterval)advance;
 @end
 

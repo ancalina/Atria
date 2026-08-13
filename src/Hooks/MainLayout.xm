@@ -12,95 +12,6 @@
 #import "../UI/ARIBackgroundView.h"
 #include <objc/runtime.h>
 
-static BOOL didLaunchSB = NO;
-
-@interface SBIconListModel (ARIGriddyCompat)
-- (void)setGriddyShouldPatch:(BOOL)value;
-@end
-
-static BOOL ARIStringLooksLikeFloatingDock(NSString *string) {
-	if(![string isKindOfClass:[NSString class]] || string.length == 0) return NO;
-	return [string containsString:@"FloatingDock"] || [string containsString:@"DockSuggestions"];
-}
-
-static BOOL ARIStringLooksLikeAppLibrary(NSString *string) {
-	if(![string isKindOfClass:[NSString class]] || string.length == 0) return NO;
-	return [string containsString:@"AppLibrary"] || [string containsString:@"LibraryCategoryPod"];
-}
-
-static BOOL ARIObjectHierarchyLooksLikeFloatingDock(UIView *view) {
-	UIView *current = view;
-	while(current) {
-		if(ARIStringLooksLikeFloatingDock(NSStringFromClass([current class]))) return YES;
-		current = current.superview;
-	}
-	return NO;
-}
-
-static BOOL ARIShouldDisableGriddyForLocation(NSString *location) {
-	if(![[ARITweakManager sharedInstance] isGriddyInstalled]) return NO;
-	if(![location isKindOfClass:[NSString class]] || location.length == 0) return NO;
-	return ARIStringLooksLikeFloatingDock(location) || ARIStringLooksLikeAppLibrary(location);
-}
-
-static BOOL ARIIsLibraryCategoryParent(id parent) {
-	if(!parent) return NO;
-
-	Class libraryCategoryFolderCls = objc_getClass("SBHLibraryCategoryFolder");
-	if(libraryCategoryFolderCls && [parent isKindOfClass:libraryCategoryFolderCls]) return YES;
-
-	NSString *className = NSStringFromClass([parent class]);
-	return [className containsString:@"SBHLibrary"];
-}
-
-static BOOL ARIIsGriddyFolderPreviewCallStack(void) {
-	NSArray<NSString *> *symbols = [NSThread callStackSymbols];
-	for(NSString *symbol in symbols) {
-		if([symbol containsString:@"SBFolderIconImageView"] ||
-		   [symbol containsString:@"_SBIconGridWrapperView"] ||
-		   [symbol containsString:@"SBFolderPageElement"]) {
-			return YES;
-		}
-	}
-	return NO;
-}
-
-static BOOL ARIShouldDisableGriddyForModel(SBIconListModel *model) {
-	if(!model) return NO;
-
-	NSString *location = model._atriaLocation;
-	SBIconListView *listView = nil;
-	if((![location isKindOfClass:[NSString class]] || location.length == 0) &&
-	   [model respondsToSelector:@selector(_atriaListView)]) {
-		listView = [model _atriaListView];
-		if([listView respondsToSelector:@selector(iconLocation)]) {
-			location = listView.iconLocation;
-		}
-	} else if([model respondsToSelector:@selector(_atriaListView)]) {
-		listView = [model _atriaListView];
-	}
-
-	if(ARIShouldDisableGriddyForLocation(location)) return YES;
-	if(IsLocationFolder(location) && ARIIsGriddyFolderPreviewCallStack()) return YES;
-	if(listView) {
-		if(ARIStringLooksLikeFloatingDock(listView.iconLocation)) return YES;
-		if(ARIObjectHierarchyLooksLikeFloatingDock(listView)) return YES;
-	}
-
-	id parent = nil;
-	if([model respondsToSelector:@selector(valueForKey:)]) {
-		@try {
-			parent = [model valueForKey:@"parent"];
-		} @catch(__unused NSException *exception) {}
-	}
-
-	if(ARIStringLooksLikeFloatingDock(NSStringFromClass([parent class]))) return YES;
-	if(ARIIsLibraryCategoryParent(parent)) return YES;
-	if(ARIIsLibraryCategoryParent(model.folder)) return YES;
-
-	return NO;
-}
-
 @interface SBHDefaultIconListLayoutProvider : NSObject
 - (SBIconListFlowExtendedLayout *)layoutForIconLocation:(NSString *)location;
 @end
@@ -115,46 +26,35 @@ static BOOL ARIShouldDisableGriddyForModel(SBIconListModel *model) {
 
 %new
 - (void)_atriaBeginEditing {
-	[[ARIEditManager sharedInstance] presentEditAlert];
+	[[ARIEditManager sharedInstance] presentEditAlertForListView:self];
 }
 
 - (SBIconListFlowExtendedLayout *)layout {
+	// Capture the live host before SpringBoard's layout getter can reach model
+	// grid code, then refresh after %orig in case reconstruction swapped it.
+	ARIObserveFloatingDockPlacementHost(self);
 	SBIconListFlowExtendedLayout *orig = %orig;
 
 	SBIconListModel *model = [self model];
 	ARITweakManager *manager = [ARITweakManager sharedInstance];
- 	if(!model._atriaLocation) model._atriaLocation = self.iconLocation;
- 	[manager.listViewModelMap setObject:self forKey:model];
+	if(model && [self.iconLocation isKindOfClass:[NSString class]] && self.iconLocation.length > 0) {
+		// Models can be reused during drag, rotation, and page reconstruction.
+		// Keep Atria's own layout context synchronized with the live host view.
+		model._atriaLocation = self.iconLocation;
+	}
+	ARIObserveFloatingDockPlacementHost(self);
+	if(model) [manager.listViewModelMap setObject:self forKey:model];
 
 	if(self._originalLayout != orig || self._atriaNeedsLayout) {
 		self._originalLayout = orig;
 		[self _atriaUpdateLayoutCache];
-		[model _atriaUpdateModelGridSizes];
+			if([model respondsToSelector:@selector(_atriaUpdateModelGridSizes)]) {
+				[model _atriaUpdateModelGridSizes];
+			}
 		self._atriaNeedsLayout = NO;
 	}
 
 	return self._atriaCachedLayout ?: orig;
-}
-
-- (void)layoutIconsNow {
-	self._atriaNeedsLayout = YES;
-	%orig;
-}
-
-- (void)layoutIconsIfNeeded {
-	if([[ARITweakManager sharedInstance] isGriddyInstalled] && ARIObjectHierarchyLooksLikeFloatingDock(self)) {
-		self.model._atriaLocation = @"SBIconLocationFloatingDock";
-		if([self.model respondsToSelector:@selector(setGriddyShouldPatch:)]) {
-			[self.model setGriddyShouldPatch:NO];
-		}
-		%orig;
-		if([self.model respondsToSelector:@selector(setGriddyShouldPatch:)]) {
-			[self.model setGriddyShouldPatch:NO];
-		}
-		return;
-	}
-
-	%orig;
 }
 
 - (void)didAddIconView:(id)arg1 {
@@ -189,8 +89,12 @@ static BOOL ARIShouldDisableGriddyForModel(SBIconListModel *model) {
 			self._atriaTap = nil;
 		}
 
-		// Per-page layout requires copying this object
-		SBIconListGridLayoutConfiguration *config = [orig.layoutConfiguration copy];
+			// Per-page layout requires copying this object
+			SBIconListGridLayoutConfiguration *config = [orig.layoutConfiguration copy];
+			if(!config) {
+				self._atriaCachedLayout = orig;
+				return;
+			}
 
 		NSUInteger cols = [manager intValueForKey:@"hs_columns" forListView:self];
 		NSUInteger rows = [manager intValueForKey:@"hs_rows" forListView:self];
@@ -292,12 +196,7 @@ static BOOL ARIShouldDisableGriddyForModel(SBIconListModel *model) {
 
 		// Create a new flow layout with our modified (and copied) configuration
 		// layoutConfiguration is readonly on SBIconListFlowExtendedLayout
-		if([manager firmwareVersion] >= 14) {
-			self._atriaCachedLayout = [[objc_getClass("SBIconListFlowExtendedLayout") alloc] initWithLayoutConfiguration:config];
-		} else {
-			// SBIconListFlowExtendedLayout does not exist on 13
-			self._atriaCachedLayout = [[objc_getClass("SBIconListFlowLayout") alloc] initWithLayoutConfiguration:config];
-		}
+		self._atriaCachedLayout = [[objc_getClass("SBIconListFlowExtendedLayout") alloc] initWithLayoutConfiguration:config];
 	} else if(IconListIsDock(self)) {
 		SBIconListGridLayoutConfiguration *config = orig.layoutConfiguration;
 
@@ -313,24 +212,12 @@ static BOOL ARIShouldDisableGriddyForModel(SBIconListModel *model) {
 		[config setNumberOfLandscapeColumns:rows];
 		[config setNumberOfLandscapeRows:cols];
 
-		if([manager firmwareVersion] >= 14) {
-			self.additionalLayoutInsets = UIEdgeInsetsMake(
-				[manager floatValueForKey:@"dock_inset_top"],
-				[manager floatValueForKey:@"dock_inset_left"],
-				[manager floatValueForKey:@"dock_inset_bottom"],
-				[manager floatValueForKey:@"dock_inset_right"]
-			);
-		} else {
-			CGFloat spaceX = [manager floatValueForKey:@"dock_spacing_x"];
-			CGFloat spaceY = [manager floatValueForKey:@"dock_spacing_y"];
-
-			self.layoutInsets = UIEdgeInsetsMake(
-				[manager floatValueForKey:@"dock_inset_top"] - spaceY / 2,
-				[manager floatValueForKey:@"dock_inset_left"] - spaceX / 2,
-				[manager floatValueForKey:@"dock_inset_bottom"] - spaceY / 2,
-				[manager floatValueForKey:@"dock_inset_right"] - spaceX / 2
-			);
-		}
+		self.additionalLayoutInsets = UIEdgeInsetsMake(
+			[manager floatValueForKey:@"dock_inset_top"],
+			[manager floatValueForKey:@"dock_inset_left"],
+			[manager floatValueForKey:@"dock_inset_bottom"],
+			[manager floatValueForKey:@"dock_inset_right"]
+		);
 
 		// We don't need to copy our grid config for dock, so set it
 		// to the original object now that we've modified the layout.
@@ -340,9 +227,8 @@ static BOOL ARIShouldDisableGriddyForModel(SBIconListModel *model) {
 
 - (CGSize)iconSpacing {
 	CGSize spacing = %orig;
-	// This doesn't work on iOS 13
 	ARITweakManager *manager = [ARITweakManager sharedInstance];
-	if([manager firmwareVersion] >= 14 && IconListIsDock(self)) {
+	if(IconListIsDock(self)) {
 		CGFloat spaceX = [manager floatValueForKey:@"dock_spacing_x"];
 		CGFloat spaceY = [manager floatValueForKey:@"dock_spacing_y"];
 		// I divide by 2 to keep it consistent with behavior of root
@@ -362,35 +248,16 @@ static BOOL ARIShouldDisableGriddyForModel(SBIconListModel *model) {
 
 %end
 
-%hook SBIconController
+%group IconListLayoutNowHook
 
-- (void)viewWillAppear:(BOOL)animated {
+%hook SBIconListView
+
+- (void)layoutIconsNow {
+	self._atriaNeedsLayout = YES;
 	%orig;
-	didLaunchSB = YES;
 }
 
 %end
-
-%group GriddyFloatingDockCompat
-
-%hook SBIconListModel
-
-- (BOOL)griddyShouldPatch {
-	if(ARIShouldDisableGriddyForModel(self)) return NO;
-	return %orig;
-}
-
-- (void)setGriddyShouldPatch:(BOOL)value {
-	if(ARIShouldDisableGriddyForModel(self)) {
-		%orig(NO);
-		return;
-	}
-
-	%orig(value);
-}
-
-%end
-
 %end
 
 // Layout provider hook
@@ -400,13 +267,9 @@ static BOOL ARIShouldDisableGriddyForModel(SBIconListModel *model) {
 	SBIconListFlowExtendedLayout *orig = %orig;
 	// We override the original class for root, unless we are the subclass
 	ARITweakManager *manager = [ARITweakManager sharedInstance];
-	if(IsLocationRoot(location) && ![self isMemberOfClass:objc_getClass("ARIAppLibraryIconListLayoutProvider")]) {
+		if(IsLocationRoot(location) && !ARIIsAppLibraryLayoutProvider(self)) {
 		NSUInteger cols = [manager intValueForKey:@"hs_columns"];
 		NSUInteger rows = [manager intValueForKey:@"hs_rows"];
-
-		// By setting the cols and rows to 0x7F (127) after SpringBoard launches, it fixes a bug 
-		// where icons would disappear before they scroll visually offscreen on iOS 14.
-		if (didLaunchSB) cols = rows = 0x7F;
 
 		[orig.layoutConfiguration setNumberOfPortraitColumns:cols];
 		[orig.layoutConfiguration setNumberOfPortraitRows:rows];
@@ -426,8 +289,20 @@ static BOOL ARIShouldDisableGriddyForModel(SBIconListModel *model) {
 
 %end
 
-static void preferencesChanged() {
-    [[ARITweakManager sharedInstance] updateLayoutForRoot:YES forDock:YES animated:YES];
+static void preferencesChanged(CFNotificationCenterRef center,
+                               void *observer,
+                               CFStringRef name,
+                               const void *object,
+                               CFDictionaryRef userInfo) {
+    (void)center;
+    (void)observer;
+    (void)name;
+    (void)object;
+    (void)userInfo;
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[[ARITweakManager sharedInstance]
+			updateLayoutForRoot:YES forDock:YES animated:YES];
+	});
 }
 
 %ctor {
@@ -435,15 +310,15 @@ static void preferencesChanged() {
 	if([manager isEnabled] && [manager boolValueForKey:@"layoutEnabled"]) {
 		NSLog(@"[Atria]: Loading hooks from %s", __FILE__);
 		%init();
-		if([manager isGriddyInstalled]) {
-			%init(GriddyFloatingDockCompat);
+		Class iconListViewClass = objc_getClass("SBIconListView");
+		if(class_getInstanceMethod(iconListViewClass, @selector(layoutIconsNow))) {
+			%init(IconListLayoutNowHook);
 		}
-
 		CFNotificationCenterAddObserver(
 			CFNotificationCenterGetDarwinNotifyCenter(),
 			NULL,
-			(CFNotificationCallback)preferencesChanged,
-			(CFStringRef)@"me.lau.Atria/ReloadPrefs",
+			preferencesChanged,
+			CFSTR("me.lau.Atria/ReloadPrefs"),
 			NULL,
 			CFNotificationSuspensionBehaviorDeliverImmediately
 		);

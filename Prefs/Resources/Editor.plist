@@ -24,6 +24,20 @@
 		</dict>
 		<dict>
 			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>me.lau.AtriaPrefs</string>
+			<key>key</key>
+			<string>useStepperControls</string>
+			<key>label</key>
+			<string>슬라이더 대신 −/+ 버튼 사용</string>
+			<key>PostNotification</key>
+			<string>me.lau.Atria/ReloadPrefs</string>
+		</dict>
+		<dict>
+			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
 			<string>열기 위치</string>

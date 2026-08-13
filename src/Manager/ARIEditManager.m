@@ -1,57 +1,93 @@
 #import "ARIEditManager.h"
-#import "../Editor/ARISettingCell.h"
 #import "ARITweakManager.h"
 
 #include <objc/runtime.h>
-#include <dlfcn.h>
 
-static NSString *ARIAEditorResourceDirectoryPath(void) {
-    static NSString *resourceDirectoryPath;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        NSMutableArray<NSString *> *candidates = [NSMutableArray new];
-
-        Dl_info info = {0};
-        if(dladdr((const void *)&ARIAEditorResourceDirectoryPath, &info) && info.dli_fname) {
-            NSString *dylibDirectory = [@(info.dli_fname) stringByDeletingLastPathComponent];
-            [candidates addObject:[dylibDirectory stringByAppendingPathComponent:@".jbroot/Library/PreferenceBundles/AtriaPrefs.bundle/Editor"]];
+static UIViewController *ARIVisibleViewController(UIViewController *controller) {
+    UIViewController *current = controller;
+    while(current) {
+        UIViewController *next = nil;
+        if(current.presentedViewController && !current.presentedViewController.isBeingDismissed) {
+            next = current.presentedViewController;
+        } else if([current isKindOfClass:[UINavigationController class]]) {
+            next = ((UINavigationController *)current).visibleViewController;
+        } else if([current isKindOfClass:[UITabBarController class]]) {
+            next = ((UITabBarController *)current).selectedViewController;
         }
 
-        [candidates addObject:@THEOS_PACKAGE_INSTALL_PREFIX "/Library/PreferenceBundles/AtriaPrefs.bundle/Editor"];
-        [candidates addObject:@"/Library/PreferenceBundles/AtriaPrefs.bundle/Editor"];
-
-        NSFileManager *fileManager = [NSFileManager defaultManager];
-        for(NSString *candidate in candidates) {
-            BOOL isDirectory = NO;
-            if([fileManager fileExistsAtPath:candidate isDirectory:&isDirectory] && isDirectory) {
-                resourceDirectoryPath = candidate;
-                break;
-            }
-        }
-    });
-    return resourceDirectoryPath;
+        if(!next || next == current) break;
+        current = next;
+    }
+    return current;
 }
 
-static NSString *ARIAEditorResourcePath(NSString *name) {
-    if(![name isKindOfClass:[NSString class]] || name.length == 0) return nil;
+static UIViewController *ARIViewControllerForView(UIView *view) {
+    UIResponder *responder = view;
+    while(responder) {
+        if([responder isKindOfClass:[UIViewController class]]) {
+            return (UIViewController *)responder;
+        }
+        responder = responder.nextResponder;
+    }
+    return nil;
+}
 
-    NSString *resourceDirectory = ARIAEditorResourceDirectoryPath();
-    if(resourceDirectory.length == 0) return nil;
+static id ARIIconControllerSharedInstance(void) {
+    Class controllerClass = objc_getClass("SBIconController");
+    return [controllerClass respondsToSelector:@selector(sharedInstance)]
+        ? [controllerClass sharedInstance]
+        : nil;
+}
 
-    NSArray<NSString *> *candidateNames = @[
-        name,
-        [name stringByReplacingOccurrencesOfString:@" " withString:@"_"]
-    ];
+UIViewController *ARIHomeScreenPresenter(void) {
+    ARITweakManager *manager = [ARITweakManager sharedInstance];
+    SBRootFolderView *rootFolderView = [manager rootFolderView];
+    id iconController = ARIIconControllerSharedInstance();
 
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    for(NSString *candidateName in candidateNames) {
-        NSString *path = [resourceDirectory stringByAppendingPathComponent:[candidateName stringByAppendingPathExtension:@"png"]];
-        if([fileManager fileExistsAtPath:path]) {
-            return path;
+    // SBIconController stopped inheriting from UIViewController on iOS 17.
+    // Preserve the original presenter on iOS 15 and 16, then resolve the
+    // controller that actually owns the root-folder view on newer versions.
+    UIViewController *controller = [iconController isKindOfClass:[UIViewController class]]
+        ? (UIViewController *)iconController
+        : nil;
+    if(!controller) controller = ARIViewControllerForView(rootFolderView);
+    if(!controller) {
+        if([iconController respondsToSelector:@selector(_rootFolderController)]) {
+            id rootFolderController = [iconController _rootFolderController];
+            if([rootFolderController isKindOfClass:[UIViewController class]]) {
+                controller = rootFolderController;
+            }
         }
     }
 
-    return nil;
+    if(!controller) {
+        UIApplication *application = [UIApplication sharedApplication];
+        UIWindow *fallbackWindow = nil;
+        for(UIWindow *window in application.windows) {
+            if(rootFolderView.window == window) {
+                fallbackWindow = window;
+                break;
+            }
+            if(!fallbackWindow && window.isKeyWindow) fallbackWindow = window;
+        }
+        controller = fallbackWindow.rootViewController ?: application.windows.firstObject.rootViewController;
+    }
+
+    return ARIVisibleViewController(controller);
+}
+
+static UIView *ARIHomeScreenEditorHostView(void) {
+    id iconController = ARIIconControllerSharedInstance();
+    if([iconController isKindOfClass:[UIViewController class]]) {
+        UIView *legacyView = ((UIViewController *)iconController).view;
+        if(legacyView.window) return legacyView;
+    }
+
+    SBRootFolderView *rootFolderView = [[ARITweakManager sharedInstance] rootFolderView];
+    if(rootFolderView.window) return rootFolderView;
+
+    UIViewController *presenter = ARIHomeScreenPresenter();
+    return presenter.view.window ? presenter.view : nil;
 }
 
 @implementation ARIEditManager {
@@ -59,7 +95,9 @@ static NSString *ARIAEditorResourcePath(NSString *name) {
     BOOL _queueDockLayout;
     BOOL _singleList;
     NSString *_editingLocation;
-    SBIconListView *_current;
+    __weak SBIconListView *_current;
+    __weak SBIconListView *_pendingListView;
+    __weak UIAlertController *_editAlertController;
 }
 
 @synthesize isEditing = _isEditing;
@@ -80,17 +118,17 @@ static NSString *ARIAEditorResourcePath(NSString *name) {
 - (void)toggleEditView:(BOOL)toggle withTargetLocation:(NSString *)targetLoc {
     if(toggle) {
         // Start edit
+        SBIconListView *requestedListView = _pendingListView;
+        _pendingListView = nil;
         if(_isEditing) return;
         _isEditing = YES;
         _editingLocation = targetLoc;
 
-        UIViewController *iconController = (UIViewController *)[objc_getClass("SBIconController") sharedInstance];
-
         // Check if this list view has custom config
-        _current = [[ARITweakManager sharedInstance] currentListView];
+        _current = requestedListView ?: [[ARITweakManager sharedInstance] currentListView];
         // No per page layout for the following
         if(![targetLoc isEqualToString:@"dock"] && ![targetLoc isEqualToString:@"pagedot"]) {
-            _singleList = [[ARITweakManager sharedInstance] doesCustomConfigForListViewExist:_current];
+            _singleList = _current && [[ARITweakManager sharedInstance] doesCustomConfigForListViewExist:_current];
         } else {
             _singleList = NO;
         }
@@ -98,9 +136,17 @@ static NSString *ARIAEditorResourcePath(NSString *name) {
         ARIEditingMainView *view = [[ARIEditingMainView alloc] initWithTarget:targetLoc];
         view.alpha = 0.0F;
         view.transform = CGAffineTransformMakeScale(0.25F, 0.25F);
-        [iconController.view addSubview:view];
+        UIView *hostView = ARIHomeScreenEditorHostView();
+        if(!hostView) {
+            _isEditing = NO;
+            _editingLocation = nil;
+            _current = nil;
+            _singleList = NO;
+            return;
+        }
+        [hostView addSubview:view];
         [NSLayoutConstraint activateConstraints:@[
-            [view.centerXAnchor constraintEqualToAnchor:iconController.view.centerXAnchor],
+            [view.centerXAnchor constraintEqualToAnchor:hostView.centerXAnchor],
         ]];
 
         [UIView animateWithDuration:0.2f
@@ -110,13 +156,30 @@ static NSString *ARIAEditorResourcePath(NSString *name) {
                 view.alpha = 1.0F;
                 view.transform = CGAffineTransformMakeScale(1.0F, 1.0F);
             }
-            completion:^(BOOL finished) {
-                [view toggleOptionsView:nil];
+            completion:^(__unused BOOL finished) {
+                // A context-menu dismissal or SpringBoard's edit-mode
+                // transition can interrupt this purely visual animation on
+                // older releases.  The upstream editor did not make opening
+                // its controls conditional on the animation's `finished`
+                // value, so only validate that this is still the live editor.
+                if(self->_isEditing && self.editView == view) {
+                    [view showInitialOptionsIfNeeded];
+                }
             }];
         self.editView = view;
     } else {
         // End edit
-        if(!_isEditing) return;
+        _pendingListView = nil;
+        UIAlertController *alert = _editAlertController;
+        if((alert.presentingViewController || alert.view.window) && !alert.isBeingDismissed) {
+            [alert dismissViewControllerAnimated:NO completion:nil];
+        }
+        _editAlertController = nil;
+        if(!_isEditing) {
+            _current = nil;
+            _singleList = NO;
+            return;
+        }
         _isEditing = NO;
         _editingLocation = nil;
 
@@ -126,16 +189,20 @@ static NSString *ARIAEditorResourcePath(NSString *name) {
             _queueDockLayout = NO;
         }
 
+        ARIEditingMainView *viewToRemove = self.editView;
+        [viewToRemove.currentControls endTextEntry];
+        _current = nil;
+        _singleList = NO;
         [UIView animateWithDuration:0.15f
             delay:0.0f
             options:UIViewAnimationOptionCurveEaseIn
             animations:^{
-                self.editView.alpha = 0.0F;
-                self.editView.transform = CGAffineTransformMakeScale(0.2F, 0.2F);
+                viewToRemove.alpha = 0.0F;
+                viewToRemove.transform = CGAffineTransformMakeScale(0.2F, 0.2F);
             }
             completion:^(BOOL finished) {
-                [self.editView removeFromSuperview];
-                self.editView = nil;
+                [viewToRemove removeFromSuperview];
+                if(self.editView == viewToRemove) self.editView = nil;
             }];
     }
 }
@@ -144,11 +211,15 @@ static NSString *ARIAEditorResourcePath(NSString *name) {
     _queueDockLayout = YES;
 }
 
-- (void)presentEditAlert {
+- (void)presentEditAlertForListView:(SBIconListView *)listView {
+    if(_editAlertController.presentingViewController || _editAlertController.view.window) return;
+    _editAlertController = nil;
+    _pendingListView = listView;
     ARITweakManager *manager = [ARITweakManager sharedInstance];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Atria"
                                                                    message:@"무엇을 수정할까요?"
                                                             preferredStyle:UIAlertControllerStyleAlert];
+    _editAlertController = alert;
 
     [alert addAction:[self _createEditAlertAction:@"홈화면" editLocation:@"hs"]];
     [alert addAction:[self _createEditAlertAction:@"독" editLocation:@"dock"]];
@@ -160,9 +231,17 @@ static NSString *ARIAEditorResourcePath(NSString *name) {
     [alert addAction:[UIAlertAction actionWithTitle:@"취소"
                                               style:UIAlertActionStyleCancel
                                             handler:^(UIAlertAction *action){
+                                                self->_pendingListView = nil;
+                                                self->_editAlertController = nil;
                                             }]];
 
-    [[objc_getClass("SBIconController") sharedInstance] presentViewController:alert animated:YES completion:nil];
+    UIViewController *presenter = ARIHomeScreenPresenter();
+    if(!presenter || presenter.isBeingDismissed) {
+        _pendingListView = nil;
+        _editAlertController = nil;
+        return;
+    }
+    [presenter presentViewController:alert animated:YES completion:nil];
 }
 
 - (UIAlertAction *)_createEditAlertAction:(NSString *)title editLocation:(NSString *)location {
@@ -174,72 +253,44 @@ static NSString *ARIAEditorResourcePath(NSString *name) {
                                   }];
 }
 
-- (NSMutableArray *)currentValidSettings {
-    return self.editView.validsettingsForTarget;
-}
-
 - (void)toggleSingleListMode {
-    _singleList = !_singleList;
-    // Update if we just set to single list mode
-    if(_singleList) _current = [[ARITweakManager sharedInstance] currentListView];
-
-    if(_singleList && ![[ARITweakManager sharedInstance] doesCustomConfigForListViewExist:_current]) {
-        // Freeze config for the page
-        [[ARITweakManager sharedInstance] createCustomForListView:_current];
-    } else if(!_singleList) {
-        // Clear custom config
-        [[ARITweakManager sharedInstance] deleteCustomForListView:_current];
+    ARITweakManager *manager = [ARITweakManager sharedInstance];
+    if(!_singleList) {
+        NSArray<SBIconListView *> *rootListViews = [manager allRootListViews];
+        SBIconListView *candidate = (_current && [rootListViews containsObject:_current])
+            ? _current
+            : [manager currentListView];
+        if(!candidate || ![rootListViews containsObject:candidate]) return;
+        _current = candidate;
+        _singleList = YES;
+        if(![manager doesCustomConfigForListViewExist:_current]) {
+            // Freeze config for the page
+            [manager createCustomForListView:_current];
+        }
+        return;
     }
+
+    SBIconListView *liveListView = [self currentIconListViewIfSinglePage];
+    if(!liveListView) return;
+    [manager deleteCustomForListView:liveListView];
+    _singleList = NO;
+    _current = nil;
 }
 
 - (SBIconListView *)currentIconListViewIfSinglePage {
-    return _singleList ? _current : nil;
-}
-
-// Collection view delegate and data source
-
-- (ARISettingCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
-    ARISettingCell *cell = (ARISettingCell *)[collectionView dequeueReusableCellWithReuseIdentifier:@"EditCell" forIndexPath:indexPath];
-    NSString *key = self.editView.validsettingsForTarget[indexPath.row];
-    cell.opLabel.text = [[ARITweakManager sharedInstance] getSettingByKey:key].translation;
-
-    // Turn a key like "dock_inset_left" into "inset_left"
-    NSArray *components = [key componentsSeparatedByString:@"_"];
-    if([components count] > 1) {
-        key = [key
-            stringByReplacingOccurrencesOfString:[components[0] stringByAppendingString:@"_"]
-                                      withString:@""];
+    if(!_singleList) return nil;
+    ARITweakManager *manager = [ARITweakManager sharedInstance];
+    NSArray<SBIconListView *> *rootListViews = [manager allRootListViews];
+    if(!_current || ![rootListViews containsObject:_current]) {
+        // SpringBoard recreates list views during rotation/page rebuilding.
+        // Rebind to the live page, but keep single-page mode active if the
+        // replacement is not ready yet so callers can block rather than
+        // accidentally treating nil as a request to edit global settings.
+        SBIconListView *candidate = [manager currentListView];
+        if(!candidate || ![rootListViews containsObject:candidate]) return nil;
+        _current = candidate;
     }
-
-    // Calculate path and set image
-    NSString *path = ARIAEditorResourcePath(key);
-    cell.img.image = [[UIImage imageWithContentsOfFile:path] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate] ?: [UIImage systemImageNamed:@"gear"];
-
-    return cell;
-}
-
-- (NSInteger)collectionView:(UICollectionView *)collectionView
-     numberOfItemsInSection:(NSInteger)numberOfItemsInSection {
-    return [self.editView.validsettingsForTarget count];
-}
-
-- (void)collectionView:(UICollectionView *)collectionView
-    didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
-    NSString *key = self.editView.validsettingsForTarget[indexPath.row];
-    [self.editView setupForSettingKey:key];
-    [self.editView toggleOptionsView:nil];
-}
-
-- (CGSize)collectionView:(UICollectionView *)collectionView
-                    layout:(UICollectionViewLayout *)collectionViewLayout
-    sizeForItemAtIndexPath:(NSIndexPath *)indexPath {
-    return CGSizeMake(65, 65);
-}
-
-- (UIEdgeInsets)collectionView:(UICollectionView *)collectionView
-                        layout:(UICollectionViewLayout *)collectionViewLayout
-        insetForSectionAtIndex:(NSInteger)section {
-    return UIEdgeInsetsMake(5, 10, 10, 10); // top, left, bottom, right
+    return _current;
 }
 
 @end
