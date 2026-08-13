@@ -9,16 +9,17 @@
 #import "../Editor/ARIEditingMainView.h"
 #import "ARITweakManager.h"
 
-@interface ARIEditManager : NSObject <UICollectionViewDelegate, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout>
+FOUNDATION_EXPORT UIViewController *ARIHomeScreenPresenter(void);
+
+@interface ARIEditManager : NSObject
 @property (nonatomic, strong) ARIEditingMainView *editView;
 @property (nonatomic, readonly, assign) BOOL isEditing;
 @property (nonatomic, readonly, strong) NSString *editingLocation;
 @property (nonatomic, readonly, assign) BOOL singleListMode;
 - (void)toggleEditView:(BOOL)toggle withTargetLocation:(NSString *)targetLoc;
-- (NSMutableArray *)currentValidSettings;
 - (void)setDockLayoutQueued;
 - (void)toggleSingleListMode;
-- (void)presentEditAlert;
+- (void)presentEditAlertForListView:(SBIconListView *)listView;
 - (SBIconListView *)currentIconListViewIfSinglePage;
 + (instancetype)sharedInstance;
 @end

@@ -58,9 +58,7 @@ typedef void (^ARICustomGreetingEntrySaveHandler)(NSDictionary *entry);
     _timePicker = [[UIDatePicker alloc] init];
     _timePicker.translatesAutoresizingMaskIntoConstraints = NO;
     _timePicker.datePickerMode = UIDatePickerModeTime;
-    if(@available(iOS 13.4, *)) {
-        _timePicker.preferredDatePickerStyle = UIDatePickerStyleWheels;
-    }
+    _timePicker.preferredDatePickerStyle = UIDatePickerStyleWheels;
     _timePicker.minuteInterval = 1;
     _timePicker.date = [self _dateFromValue:_value];
     [_timePicker addTarget:self action:@selector(timeChanged:) forControlEvents:UIControlEventValueChanged];

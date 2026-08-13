@@ -7,6 +7,12 @@
 #import "ARILabelScriptRunner.h"
 #import "../../Shared/ARILabelScriptCompiler.h"
 
+static NSUInteger const kARILabelScriptExecutionBudgetPerAdvance = 512;
+static NSTimeInterval const kARILabelScriptExecutionBudgetYieldInterval = 1.0;
+static NSTimeInterval const kARILabelScriptMinimumWaitInterval = 0.1;
+static NSTimeInterval const kARILabelScriptIdlePollInterval = 60.0;
+static NSUInteger const kARILabelScriptMaximumRuntimeFrames = 40;
+
 @interface ARILabelScriptFrame : NSObject
 @property (nonatomic, copy) NSArray<NSDictionary *> *steps;
 @property (nonatomic, assign) NSUInteger index;
@@ -23,15 +29,14 @@
     NSMutableArray<ARILabelScriptFrame *> *_frames;
     BOOL _valid;
     BOOL _started;
+    BOOL _finished;
     NSString *_currentTextTemplate;
-    NSString *_lastError;
     NSDictionary<NSString *, id> *_context;
 }
 
 @synthesize valid = _valid;
 @synthesize started = _started;
 @synthesize currentTextTemplate = _currentTextTemplate;
-@synthesize lastError = _lastError;
 @synthesize context = _context;
 
 - (instancetype)init {
@@ -39,7 +44,6 @@
     if(self) {
         _frames = [NSMutableArray new];
         _currentTextTemplate = @"";
-        _lastError = @"";
         _context = @{};
     }
     return self;
@@ -52,7 +56,9 @@
 
 - (double)_contextNumberForKey:(NSString *)key fallback:(double)fallback {
     id value = _context[key];
-    return [value respondsToSelector:@selector(doubleValue)] ? [value doubleValue] : fallback;
+    if(![value respondsToSelector:@selector(doubleValue)]) return fallback;
+    double number = [value doubleValue];
+    return isfinite(number) ? number : fallback;
 }
 
 - (BOOL)_contextBoolForKey:(NSString *)key fallback:(BOOL)fallback {
@@ -69,8 +75,14 @@
     return [value rangeOfString:query options:NSCaseInsensitiveSearch].location != NSNotFound;
 }
 
-- (void)_pushFrameWithSteps:(NSArray<NSDictionary *> *)steps repeatCount:(NSInteger)repeatCount infinite:(BOOL)infinite {
-    if(steps.count == 0) return;
+- (BOOL)_pushFrameWithSteps:(NSArray<NSDictionary *> *)steps repeatCount:(NSInteger)repeatCount infinite:(BOOL)infinite {
+    if(steps.count == 0) return YES;
+    if(_frames.count >= kARILabelScriptMaximumRuntimeFrames) {
+        _valid = NO;
+        _finished = YES;
+        [_frames removeAllObjects];
+        return NO;
+    }
 
     ARILabelScriptFrame *frame = [ARILabelScriptFrame new];
     frame.steps = steps;
@@ -78,6 +90,7 @@
     frame.infinite = infinite;
     frame.remainingCount = repeatCount;
     [_frames addObject:frame];
+    return YES;
 }
 
 - (void)_pushRootFrame {
@@ -87,19 +100,19 @@
 
 - (void)reset {
     _started = NO;
+    _finished = NO;
     _currentTextTemplate = @"";
     [_frames removeAllObjects];
     [self _pushRootFrame];
 }
 
 - (BOOL)loadSource:(NSString *)source {
-    NSError *error = nil;
-    NSDictionary *script = [ARILabelScriptCompiler scriptDictionaryFromSource:source error:&error];
+    NSDictionary *script = [ARILabelScriptCompiler scriptDictionaryFromSource:source error:nil];
     if(!script) {
         _valid = NO;
         _started = NO;
+        _finished = YES;
         _currentTextTemplate = @"";
-        _lastError = error.localizedDescription ?: @"Invalid script.";
         [_frames removeAllObjects];
         return NO;
     }
@@ -107,7 +120,6 @@
     _rootSteps = [script[@"steps"] isKindOfClass:[NSArray class]] ? script[@"steps"] : @[];
     _rootLoops = script[@"loop"] ? [script[@"loop"] boolValue] : YES;
     _valid = YES;
-    _lastError = @"";
     [self reset];
     return YES;
 }
@@ -235,21 +247,37 @@
 }
 
 - (NSTimeInterval)advance {
-    if(!_valid || _rootSteps.count == 0) {
+    if(!_valid) {
         _started = YES;
-        return 60.0;
+        return kARILabelScriptIdlePollInterval;
+    }
+
+    if(_finished) {
+        _started = YES;
+        return kARILabelScriptIdlePollInterval;
+    }
+
+    if(_rootSteps.count == 0) {
+        _started = YES;
+        _finished = !_rootLoops;
+        return kARILabelScriptIdlePollInterval;
     }
 
     if(_frames.count == 0) {
+        if(_started && !_rootLoops) {
+            _finished = YES;
+            return kARILabelScriptIdlePollInterval;
+        }
         [self _pushRootFrame];
     }
 
     NSUInteger executedBlocks = 0;
-    while(executedBlocks < 512) {
+    while(executedBlocks < kARILabelScriptExecutionBudgetPerAdvance) {
         NSDictionary *block = [self _nextBlock];
         if(!block) {
             _started = YES;
-            return 60.0;
+            _finished = !_rootLoops;
+            return kARILabelScriptIdlePollInterval;
         }
 
         executedBlocks++;
@@ -263,7 +291,8 @@
         if([type isEqualToString:@"wait"]) {
             _started = YES;
             double seconds = [block[@"seconds"] respondsToSelector:@selector(doubleValue)] ? [block[@"seconds"] doubleValue] : 0.0;
-            return MAX(0.1, seconds);
+            if(!isfinite(seconds)) seconds = kARILabelScriptMinimumWaitInterval;
+            return MIN(ARILabelScriptMaximumWaitSeconds, MAX(kARILabelScriptMinimumWaitInterval, seconds));
         }
 
         if([type isEqualToString:@"reload"]) {
@@ -276,21 +305,27 @@
             NSArray *branch = [self _evaluateCondition:condition ?: @{}]
                                   ? ([block[@"then"] isKindOfClass:[NSArray class]] ? block[@"then"] : @[])
                                   : ([block[@"else"] isKindOfClass:[NSArray class]] ? block[@"else"] : @[]);
-            [self _pushFrameWithSteps:branch repeatCount:1 infinite:NO];
+            if(![self _pushFrameWithSteps:branch repeatCount:1 infinite:NO]) {
+                _started = YES;
+                return kARILabelScriptIdlePollInterval;
+            }
             continue;
         }
 
         if([type isEqualToString:@"repeat"]) {
             NSArray *steps = [block[@"steps"] isKindOfClass:[NSArray class]] ? block[@"steps"] : @[];
             NSInteger times = [block[@"times"] respondsToSelector:@selector(integerValue)] ? [block[@"times"] integerValue] : 0;
-            BOOL infinite = times <= 0;
-            [self _pushFrameWithSteps:steps repeatCount:MAX(1, times) infinite:infinite];
+            BOOL infinite = times == 0;
+            if(![self _pushFrameWithSteps:steps repeatCount:MAX(1, times) infinite:infinite]) {
+                _started = YES;
+                return kARILabelScriptIdlePollInterval;
+            }
             continue;
         }
     }
 
     _started = YES;
-    return 1.0;
+    return kARILabelScriptExecutionBudgetYieldInterval;
 }
 
 @end

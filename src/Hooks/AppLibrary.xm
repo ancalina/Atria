@@ -8,7 +8,25 @@
 
 #include <objc/runtime.h>
 
-static id fixedLayoutForAppLibrary = nil;
+@interface SBHLibraryViewController : UIViewController
+- (id)listLayoutProvider;
+- (void)setListLayoutProvider:(id)provider;
+@end
+
+static void *ARIAppLibraryProviderAssociationKey = &ARIAppLibraryProviderAssociationKey;
+
+static void ARIMarkAppLibraryLayoutProvider(id provider) {
+    if(provider) {
+        objc_setAssociatedObject(provider,
+                                 ARIAppLibraryProviderAssociationKey,
+                                 @YES,
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+}
+
+BOOL ARIIsAppLibraryLayoutProvider(id provider) {
+    return [objc_getAssociatedObject(provider, ARIAppLibraryProviderAssociationKey) boolValue];
+}
 
 %hook SBIconController
 
@@ -36,25 +54,35 @@ static id fixedLayoutForAppLibrary = nil;
 
 %group AppLibraryFix
 
-// Subclass layout provider. I could have just added a property to tag an instance as our fix,
-// but this allows for future expansion (also it's fun to use this :P)
-%subclass ARIAppLibraryIconListLayoutProvider : SBHDefaultIconListLayoutProvider
-%end
-
-// Patch the app library layout provider methods
-
 %hook SBHLibraryViewController
 
 - (id)listLayoutProvider {
-	return fixedLayoutForAppLibrary;
+	id originalProvider = %orig;
+	ARIMarkAppLibraryLayoutProvider(originalProvider);
+	return originalProvider;
 }
 
+- (void)viewDidLoad {
+	%orig;
+	// iOS 17 exposes a readonly provider. Force one getter read after the view
+	// has loaded so code paths that subsequently use the ivar directly retain
+	// SpringBoard's configured object while MainLayout can identify it.
+	if([self respondsToSelector:@selector(listLayoutProvider)]) {
+		ARIMarkAppLibraryLayoutProvider([self listLayoutProvider]);
+	}
+}
+
+%end
+
+%end
+
+%group AppLibrarySetterFix
+
+%hook SBHLibraryViewController
+
 - (void)setListLayoutProvider:(id)list {
-    if(!fixedLayoutForAppLibrary)
-        fixedLayoutForAppLibrary = [[ARITweakManager sharedInstance] firmwareVersion] >= 14
-                                       ? [objc_getClass("ARIAppLibraryIconListLayoutProvider") new]
-                                       : nil;
-    %orig(fixedLayoutForAppLibrary);
+	ARIMarkAppLibraryLayoutProvider(list);
+	%orig(list);
 }
 
 %end
@@ -68,7 +96,14 @@ static id fixedLayoutForAppLibrary = nil;
 		%init();
 
 		if([manager boolValueForKey:@"layoutEnabled"]) {
-			%init(AppLibraryFix);
+				Class libraryViewControllerClass = objc_getClass("SBHLibraryViewController");
+					if(libraryViewControllerClass &&
+					   class_getInstanceMethod(libraryViewControllerClass, @selector(listLayoutProvider))) {
+					%init(AppLibraryFix);
+					if(class_getInstanceMethod(libraryViewControllerClass, @selector(setListLayoutProvider:))) {
+						%init(AppLibrarySetterFix);
+					}
+				}
 		}
 	}
 }

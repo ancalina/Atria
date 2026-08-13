@@ -1,3 +1,45 @@
+Version 1.4.1k4:
+- Reduced third-party icon-placement compatibility to an ABI-gated runtime
+  boundary; no external implementation, preferences, or saved state is included
+- Restored official Atria's iOS 15 transient-model admission behavior needed
+  while an icon model has no assigned location; assigned user and suggestion
+  Dock models retain their native capacity and persistence
+- Restored the iOS 15 Dock startup sequence and four-column constructor default
+  used by official Atria, avoiding early model mutation and duplicate relayout
+- Added a Preferences action that safely empties the user Dock by moving its
+  apps and folders to available Home Screen space
+- Preserved existing page order, fixed icon locations, hidden/Focus metadata,
+  folder contents and custom folder names during Dock reset, with verified
+  rollback if the native SpringBoard move or save fails
+- Correlated Dock-reset requests and results with independent per-request
+  defaults keys so concurrent PreferenceLoader instances cannot lose or mix responses
+- Added runtime-safe home-screen presenter and editor hosting for iOS 17+
+- Prevented constructor-time UIKit re-entry from freezing SpringBoard on iOS 15 RootHide
+- Restored upstream page-indicator targeting: the direct control moves on the legacy hierarchy and its complete search/accessory container moves on the modern hierarchy, keeping visual, animation, and hit-test coordinates aligned
+- Applied page-indicator offsets only at SpringBoard's exact page-control layout lifecycle, with opaque metrics forwarding, runtime ABI checks, replacement cleanup, and absolute no-drift frame tracking
+- Added signed numeric entry for negative editor offsets
+- Made page-dot metrics opaque across SpringBoard ABI versions
+- Followed the shortcut activation handler to its iOS 26.2 provider class and ABI-gated both old and new routes
+- Skipped removed folder-background hooks and non-application App Library indicators through exact runtime ABI checks
+- Replaced raw grid-size writes with a signature-checked setter and validates remaining private aggregate layouts before writing
+- Compared private aggregate field encodings, not only byte sizes, before typed calls or hooks
+- Added semantic runtime ABI gates for widget hooks, including the integer-to-object grid-class transition on iOS 18+
+- Restored editor lifecycle handling on iOS 17 and made orientation scene-aware
+- Removed the obsolete iOS 16 package upper bound
+- Refreshed model-to-list-view location tracking across drag, rotation, and page reconstruction
+- Rebuilt the label-script validator and runtime with source, nesting, repeat, wait, and execution-budget limits
+- Fixed non-looping label scripts restarting after their final block
+- Cleaned up the visual script editor with diagnostics, validated copy/paste, transactional edits, undo/redo, and safe source round-tripping
+- Removed the unused legacy block editor implementation
+- Added transactional validation for imported settings and fixed several editor/layout race conditions
+- Added lossless legacy/per-page preference migration and preserved validated page markers during import/export
+- Tagged cached icon state with the exact OS and schema so upgrades cannot replay an incompatible SpringBoard layout
+- Kept App Library's configured provider on readonly iOS 17+ implementations instead of replacing it
+- Added selector-gated floating-dock initializer support through the iOS 26 home-screen-context ABI
+- Unified runtime resource lookup across rootless and RootHide paths
+- Added an isolated x86_64 simulator build/probe path for testing SpringBoard injection without changing device packages
+- Repaired rootless/RootHide release packaging, package metadata validation, framework linkage, and versioning
+
 beta6:
 - Fixed app library expanded folder view icons having labels
 - Added per-page layout

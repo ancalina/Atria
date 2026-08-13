@@ -8,21 +8,12 @@
 
 @implementation ARIPageLabelView
 
-- (instancetype)init {
-    self = [super init];
-    return self;
-}
-
 - (NSString *)loadRawText {
     SBIconListView *superv = (SBIconListView *)self.superview;
     ARITweakManager *manager = [ARITweakManager sharedInstance];
     NSString *text = [manager rawValueForKey:@"pageLabelText" forListView:superv];
     if(text) return text;
     return [NSString stringWithFormat:@"Page %d", (int)[manager indexOfListView:superv] + 1];
-}
-
-- (NSString *)processRawText:(NSString *)rawText isScheduledUpdate:(BOOL)scheduled {
-    return rawText;
 }
 
 - (void)saveTextValue:(NSString *)text {

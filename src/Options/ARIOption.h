@@ -11,9 +11,13 @@
 @property (nonatomic, readonly, strong) id defaultValue;
 @property (nonatomic, readonly, assign) float lowerLimit;
 @property (nonatomic, readonly, assign) float upperLimit;
+@property (nonatomic, readonly, assign) double hardLowerLimit;
+@property (nonatomic, readonly, assign) double hardUpperLimit;
 @property (nonatomic, readonly, assign) BOOL accessibleWithEditor;
+@property (nonatomic, readonly, assign, getter=isIntegralValue) BOOL integralValue;
 - (instancetype)initWithKey:(NSString *)settingKey
                 translation:(NSString *)settingTranslation
                defaultValue:(id)defaultValue
-                      range:(float *)range;
+                 lowerLimit:(float)lowerLimit
+                 upperLimit:(float)upperLimit;
 @end

@@ -43,9 +43,16 @@ typedef NS_ENUM(NSInteger, ARILabelScriptVisualRailMode) {
     ARILabelScriptVisualRailModeEnd,
 };
 
-static CGFloat const kARILabelScriptIndentStep = 24.0;
-static CGFloat const kARILabelScriptPanelLeadingBase = 18.0;
-static CGFloat const kARILabelScriptRailLeadingBase = 6.0;
+static CGFloat const kARILabelScriptIndentStep = 18.0;
+static CGFloat const kARILabelScriptPanelLeadingBase = 2.0;
+static CGFloat const kARILabelScriptRailLeadingBase = -2.0;
+static NSString *const kARILabelScriptBlockPasteboardType = @"me.lau.Atria.label-script-block+json";
+
+static NSString *ARILabelScriptInlineLimitedString(NSString *value, NSUInteger maximumLength) {
+    NSString *text = [value isKindOfClass:[NSString class]] ? value : @"";
+    if(text.length <= maximumLength) return text;
+    return [text substringToIndex:maximumLength];
+}
 
 static NSString *ARILabelScriptInlineFormattedTimeValue(double value) {
     NSInteger totalMinutes = (NSInteger)llround(value * 60.0);
@@ -968,10 +975,11 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
 
 @end
 
-@interface ARILabelScriptInlineCell : UITableViewCell <UIGestureRecognizerDelegate>
+@interface ARILabelScriptInlineCell : UITableViewCell <UIGestureRecognizerDelegate, UIDragInteractionDelegate>
 @property (nonatomic, copy) void (^tokenHandler)(NSString *tokenIdentifier);
 @property (nonatomic, copy) void (^accessoryHandler)(void);
 @property (nonatomic, copy) void (^tapHandler)(void);
+@property (nonatomic, copy) UIDragItem *(^dragItemProvider)(void);
 - (void)configureWithParts:(NSArray<ARILabelScriptVisualPart *> *)parts
                   iconName:(NSString *)iconName
                  tintColor:(UIColor *)tintColor
@@ -996,11 +1004,12 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     UILabel *_insertTitleLabel;
     NSLayoutConstraint *_panelLeadingConstraint;
     NSMutableArray<UIView *> *_flowRails;
+    BOOL _dragSessionActive;
 }
 
 - (CGFloat)_preferredPartsWidthForContentWidth:(CGFloat)contentWidth {
-    CGFloat panelWidth = contentWidth - _panelLeadingConstraint.constant - 16.0;
-    CGFloat partsWidth = panelWidth - 116.0;
+    CGFloat panelWidth = contentWidth - _panelLeadingConstraint.constant - 2.0;
+    CGFloat partsWidth = panelWidth - 96.0;
     return MAX(120.0, partsWidth);
 }
 
@@ -1013,7 +1022,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
         _panelView = [[UIView alloc] init];
         _panelView.translatesAutoresizingMaskIntoConstraints = NO;
         _panelView.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
-        _panelView.layer.cornerRadius = 18.0;
+        _panelView.layer.cornerRadius = 14.0;
         _panelView.layer.cornerCurve = kCACornerCurveContinuous;
         _panelView.layer.borderWidth = 1.0;
         _panelView.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.06].CGColor;
@@ -1068,21 +1077,24 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
         tapGesture.delegate = self;
         [_panelView addGestureRecognizer:tapGesture];
 
+        UIDragInteraction *dragInteraction = [[UIDragInteraction alloc] initWithDelegate:self];
+        [_panelView addInteraction:dragInteraction];
+
         _flowRails = [NSMutableArray new];
 
         _panelLeadingConstraint = [_panelView.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16.0];
         [NSLayoutConstraint activateConstraints:@[
             _panelLeadingConstraint,
-            [_panelView.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16.0],
-            [_panelView.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:6.0],
-            [_panelView.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-6.0],
+            [_panelView.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-2.0],
+            [_panelView.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:3.0],
+            [_panelView.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-3.0],
 
             [_railView.leadingAnchor constraintEqualToAnchor:_panelView.leadingAnchor constant:12.0],
             [_railView.topAnchor constraintEqualToAnchor:_panelView.topAnchor constant:10.0],
             [_railView.bottomAnchor constraintEqualToAnchor:_panelView.bottomAnchor constant:-10.0],
             [_railView.widthAnchor constraintEqualToConstant:2.0],
 
-            [_iconContainer.leadingAnchor constraintEqualToAnchor:_railView.trailingAnchor constant:12.0],
+            [_iconContainer.leadingAnchor constraintEqualToAnchor:_panelView.leadingAnchor constant:10.0],
             [_iconContainer.centerYAnchor constraintEqualToAnchor:_panelView.centerYAnchor],
             [_iconContainer.widthAnchor constraintEqualToConstant:28.0],
             [_iconContainer.heightAnchor constraintEqualToConstant:28.0],
@@ -1097,9 +1109,9 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
             [_accessoryButton.widthAnchor constraintEqualToConstant:30.0],
             [_accessoryButton.heightAnchor constraintEqualToConstant:30.0],
 
-            [_partsView.leadingAnchor constraintEqualToAnchor:_iconContainer.trailingAnchor constant:12.0],
-            [_partsView.topAnchor constraintEqualToAnchor:_panelView.topAnchor constant:12.0],
-            [_partsView.bottomAnchor constraintEqualToAnchor:_panelView.bottomAnchor constant:-12.0],
+            [_partsView.leadingAnchor constraintEqualToAnchor:_iconContainer.trailingAnchor constant:8.0],
+            [_partsView.topAnchor constraintEqualToAnchor:_panelView.topAnchor constant:8.0],
+            [_partsView.bottomAnchor constraintEqualToAnchor:_panelView.bottomAnchor constant:-8.0],
             [_partsView.trailingAnchor constraintEqualToAnchor:_accessoryButton.leadingAnchor constant:-10.0],
 
             [_insertTitleLabel.centerXAnchor constraintEqualToAnchor:_panelView.centerXAnchor],
@@ -1182,6 +1194,34 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     }
 }
 
+- (NSArray<UIDragItem *> *)dragInteraction:(__unused UIDragInteraction *)interaction
+                  itemsForBeginningSession:(__unused id<UIDragSession>)session {
+    UIDragItem *item = self.dragItemProvider ? self.dragItemProvider() : nil;
+    return item ? @[ item ] : @[];
+}
+
+- (void)dragInteraction:(__unused UIDragInteraction *)interaction
+        sessionWillBegin:(__unused id<UIDragSession>)session {
+    _dragSessionActive = YES;
+    _panelView.alpha = 0.0;
+}
+
+- (void)dragInteraction:(__unused UIDragInteraction *)interaction
+                 session:(__unused id<UIDragSession>)session
+    willEndWithOperation:(UIDropOperation)operation {
+    if(operation == UIDropOperationCancel || operation == UIDropOperationForbidden) {
+        _dragSessionActive = NO;
+        _panelView.alpha = 1.0;
+    }
+}
+
+- (void)dragInteraction:(__unused UIDragInteraction *)interaction
+                 session:(__unused id<UIDragSession>)session
+     didEndWithOperation:(__unused UIDropOperation)operation {
+    _dragSessionActive = NO;
+    _panelView.alpha = 1.0;
+}
+
 - (void)accessoryTapped {
     if(self.accessoryHandler) {
         self.accessoryHandler();
@@ -1193,6 +1233,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     self.tokenHandler = nil;
     self.accessoryHandler = nil;
     self.tapHandler = nil;
+    self.dragItemProvider = nil;
     _partsView.tokenHandler = nil;
     _partsView.preferredLayoutWidth = 0.0;
     [self _clearFlowRails];
@@ -1208,6 +1249,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
              scopeRailMode:(ARILabelScriptVisualRailMode)scopeRailMode
                   selected:(BOOL)selected
              accessoryKind:(ARILabelScriptVisualAccessoryKind)accessoryKind {
+    _panelView.alpha = _dragSessionActive ? 0.0 : 1.0;
     _panelLeadingConstraint.constant = kARILabelScriptPanelLeadingBase + (MAX(depth, 0) * kARILabelScriptIndentStep);
     _railView.hidden = YES;
 
@@ -1249,7 +1291,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     _panelView.backgroundColor = selected ? [baseTint colorWithAlphaComponent:0.12] : panelBackgroundColor;
     _panelView.layer.borderColor = (selected ? [baseTint colorWithAlphaComponent:0.45] : borderColor).CGColor;
     _panelView.layer.borderWidth = isInsertRow ? 0.0 : 1.0;
-    _panelView.layer.cornerRadius = isInsertRow ? 0.0 : 18.0;
+    _panelView.layer.cornerRadius = isInsertRow ? 0.0 : 14.0;
 
     UIColor *insertTint = selected ? [baseTint colorWithAlphaComponent:0.95] : [UIColor systemBlueColor];
     _insertTitleLabel.text = [[parts valueForKey:@"text"] componentsJoinedByString:@""];
@@ -1361,9 +1403,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     _timePicker = [[UIDatePicker alloc] init];
     _timePicker.translatesAutoresizingMaskIntoConstraints = NO;
     _timePicker.datePickerMode = UIDatePickerModeTime;
-    if(@available(iOS 13.4, *)) {
-        _timePicker.preferredDatePickerStyle = UIDatePickerStyleWheels;
-    }
+    _timePicker.preferredDatePickerStyle = UIDatePickerStyleWheels;
     _timePicker.minuteInterval = 1;
     if(_allowsEndOfDay && _value >= 24.0) {
         self.navigationItem.prompt = @"24:00";
@@ -1394,7 +1434,12 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     if(_completion) {
         _completion(_value);
     }
-    [self.navigationController popViewControllerAnimated:YES];
+    if(self.navigationController.presentingViewController &&
+       self.navigationController.viewControllers.firstObject == self) {
+        [self.navigationController dismissViewControllerAnimated:YES completion:nil];
+    } else {
+        [self.navigationController popViewControllerAnimated:YES];
+    }
 }
 
 @end
@@ -1468,7 +1513,12 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     if(_completion) {
         _completion(ARILabelScriptInlineSortedDays(_selectedDays.array));
     }
-    [self.navigationController popViewControllerAnimated:YES];
+    if(self.navigationController.presentingViewController &&
+       self.navigationController.viewControllers.firstObject == self) {
+        [self.navigationController dismissViewControllerAnimated:YES completion:nil];
+    } else {
+        [self.navigationController popViewControllerAnimated:YES];
+    }
 }
 
 @end
@@ -2046,7 +2096,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
                           initialText:query
                          keyboardType:UIKeyboardTypeDefault
                            completion:^(NSString *text) {
-            _condition[@"query"] = text ?: @"";
+            _condition[@"query"] = ARILabelScriptInlineLimitedString(text, ARILabelScriptMaximumQueryLength);
         }];
         return;
     }
@@ -2058,7 +2108,8 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
                           initialText:value
                          keyboardType:UIKeyboardTypeDecimalPad
                            completion:^(NSString *text) {
-            _condition[@"value"] = @([text doubleValue]);
+            double value = [text doubleValue];
+            _condition[@"value"] = @(MAX(-273.15, MIN(1000.0, value)));
         }];
         return;
     }
@@ -2136,6 +2187,13 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
 
 @end
 
+@interface ARILabelScriptVisualEditorController () <UITableViewDropDelegate>
+- (void)_restoreRootScriptFromSource:(NSString *)source;
+- (void)_presentPendingAlertWhenPossible;
+- (void)_presentEditorControllerWhenPossible:(UIViewController *)controller attempts:(NSUInteger)attempts;
+- (NSValue *)_collapseKeyForBlock:(NSMutableDictionary *)block;
+@end
+
 @implementation ARILabelScriptVisualEditorController {
     NSMutableDictionary *_rootScript;
     NSMutableArray *_steps;
@@ -2153,6 +2211,10 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     NSInteger _selectedInsertionIndex;
     NSMutableSet<NSValue *> *_collapsedBlockPointers;
     NSString *_savedSource;
+    NSMutableArray<NSDictionary<NSString *, NSString *> *> *_pendingAlerts;
+    BOOL _pendingAlertCheckScheduled;
+    NSUInteger _pendingAlertCheckAttempts;
+    BOOL _editorPresentationPending;
 }
 
 - (instancetype)initRootControllerWithScript:(NSMutableDictionary *)script {
@@ -2190,8 +2252,10 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
     self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.estimatedRowHeight = 78.0;
+    self.tableView.estimatedRowHeight = 64.0;
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
+
+    self.tableView.dropDelegate = self;
 
     UIBarButtonItem *doneButton = [[UIBarButtonItem alloc] initWithTitle:_isRootController ? @"완료" : @"저장"
                                                                    style:UIBarButtonItemStyleDone
@@ -2232,9 +2296,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
         BOOL presentedModally = self.navigationController.presentingViewController && self.navigationController.viewControllers.firstObject == self;
         self.navigationItem.hidesBackButton = !presentedModally;
         if(presentedModally) {
-            self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemClose
-                                                                                                   target:self
-                                                                                                   action:@selector(closeEditor)];
+            self.navigationItem.leftBarButtonItem = nil;
         } else {
             self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"뒤로"
                                                                                       style:UIBarButtonItemStylePlain
@@ -2258,9 +2320,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     _dockView.translatesAutoresizingMaskIntoConstraints = NO;
     _dockView.layer.cornerRadius = 24.0;
     _dockView.layer.cornerCurve = kCACornerCurveContinuous;
-    if(@available(iOS 11.0, *)) {
-        _dockView.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
-    }
+    _dockView.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
     _dockView.clipsToBounds = YES;
     [self.view addSubview:_dockView];
 
@@ -2274,6 +2334,9 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     _addButton.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
     _addButton.semanticContentAttribute = UISemanticContentAttributeForceLeftToRight;
     _addButton.imageEdgeInsets = UIEdgeInsetsMake(0.0, -4.0, 0.0, 4.0);
+    _addButton.contentEdgeInsets = UIEdgeInsetsMake(0.0, 12.0, 0.0, 12.0);
+    _addButton.layer.cornerRadius = 17.0;
+    _addButton.layer.cornerCurve = kCACornerCurveContinuous;
     [_addButton addTarget:self action:@selector(addButtonTapped) forControlEvents:UIControlEventTouchUpInside];
     [_dockView.contentView addSubview:_addButton];
 
@@ -2315,17 +2378,9 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
 
 - (NSString *)_dockPlaceholderText {
     if(!_selectedInsertionContainer) {
-        return @"추가할 위치를 고르고 액션을 넣습니다.";
+        return @"액션 추가";
     }
-
-    NSInteger count = (NSInteger)_selectedInsertionContainer.count;
-    if(_selectedInsertionIndex <= 0) {
-        return @"맨 앞에 액션 추가";
-    }
-    if(_selectedInsertionIndex >= count) {
-        return @"맨 뒤에 액션 추가";
-    }
-    return @"여기에 액션 추가";
+    return @"선택 위치에 추가";
 }
 
 - (void)_refreshDockState {
@@ -2335,6 +2390,21 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     _redoButton.enabled = canRedo;
     _undoButton.alpha = canUndo ? 1.0 : 0.4;
     _redoButton.alpha = canRedo ? 1.0 : 0.4;
+    [_addButton setTitle:[self _dockPlaceholderText] forState:UIControlStateNormal];
+    _addButton.backgroundColor = _selectedInsertionContainer
+        ? [[UIColor systemBlueColor] colorWithAlphaComponent:0.12]
+        : [UIColor clearColor];
+}
+
+- (NSInteger)_blockSection {
+    return _isRootController ? 1 : 0;
+}
+
+- (ARILabelScriptVisualRow *)_visualRowAtIndexPath:(NSIndexPath *)indexPath {
+    if(indexPath.section != [self _blockSection] || indexPath.row < 0 || indexPath.row >= (NSInteger)_rows.count) {
+        return nil;
+    }
+    return _rows[indexPath.row];
 }
 
 - (void)_postReloadNotification {
@@ -2346,11 +2416,124 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
 }
 
 - (void)_showAlertWithTitle:(NSString *)title message:(NSString *)message {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
-                                                                   message:message
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"확인" style:UIAlertActionStyleCancel handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
+    if(!_pendingAlerts) _pendingAlerts = [NSMutableArray new];
+    [_pendingAlerts addObject:@{
+        @"title": title ?: @"Atria",
+        @"message": message ?: @""
+    }];
+    _pendingAlertCheckAttempts = 0;
+    [self _presentPendingAlertWhenPossible];
+}
+
+- (void)_presentPendingAlertWhenPossible {
+    if(_pendingAlertCheckScheduled || _pendingAlerts.count == 0) return;
+    _pendingAlertCheckScheduled = YES;
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        self->_pendingAlertCheckScheduled = NO;
+        if(self->_pendingAlerts.count == 0) return;
+
+        if(self.isBeingDismissed || self.isMovingFromParentViewController ||
+           self.navigationController.isBeingDismissed) {
+            [self->_pendingAlerts removeAllObjects];
+            return;
+        }
+
+        BOOL transitionInProgress = self.transitionCoordinator != nil ||
+                                    self.navigationController.transitionCoordinator != nil;
+        BOOL presentationBlocked = self.presentedViewController != nil ||
+                                   transitionInProgress || self.viewIfLoaded.window == nil;
+        if(presentationBlocked) {
+            self->_pendingAlertCheckAttempts++;
+            if(self->_pendingAlertCheckAttempts < 200) {
+                [self _presentPendingAlertWhenPossible];
+            } else {
+                [self->_pendingAlerts removeAllObjects];
+            }
+            return;
+        }
+
+        self->_pendingAlertCheckAttempts = 0;
+        NSDictionary<NSString *, NSString *> *entry = self->_pendingAlerts.firstObject;
+        [self->_pendingAlerts removeObjectAtIndex:0];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:entry[@"title"]
+                                                                       message:entry[@"message"]
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"확인"
+                                                  style:UIAlertActionStyleCancel
+                                                handler:^(__unused UIAlertAction *action) {
+            [self _presentPendingAlertWhenPossible];
+        }]];
+        [self presentViewController:alert animated:YES completion:nil];
+    });
+}
+
+- (void)_presentEditorControllerWhenPossible:(UIViewController *)controller attempts:(NSUInteger)attempts {
+    if(!controller) return;
+    if(attempts == 0) {
+        if(_editorPresentationPending) return;
+        _editorPresentationPending = YES;
+    } else if(!_editorPresentationPending) {
+        return;
+    }
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if(self.isBeingDismissed || self.isMovingFromParentViewController ||
+           self.navigationController.isBeingDismissed) {
+            self->_editorPresentationPending = NO;
+            return;
+        }
+
+        BOOL transitionInProgress = self.transitionCoordinator != nil ||
+                                    self.navigationController.transitionCoordinator != nil;
+        BOOL presentationBlocked = self.presentedViewController != nil ||
+                                   transitionInProgress || self.viewIfLoaded.window == nil ||
+                                   self->_pendingAlerts.count > 0 || self->_pendingAlertCheckScheduled;
+        if(presentationBlocked) {
+            if(attempts < 200) {
+                [self _presentEditorControllerWhenPossible:controller attempts:attempts + 1];
+            } else {
+                self->_editorPresentationPending = NO;
+            }
+            return;
+        }
+
+        self->_editorPresentationPending = NO;
+        [self presentViewController:controller animated:YES completion:nil];
+    });
+}
+
+- (void)_showScriptDiagnostics {
+    NSDictionary *script = _isRootController ? _rootScript : @{ @"loop": @NO, @"steps": _steps ?: @[] };
+    NSError *error = nil;
+    NSString *source = [ARILabelScriptCompiler sourceFromScriptDictionary:script error:&error];
+    if(!source) {
+        [self _showAlertWithTitle:@"스크립트 오류" message:error.localizedDescription ?: @"스크립트를 검사할 수 없습니다."];
+        return;
+    }
+
+    NSArray<NSString *> *diagnostics = [ARILabelScriptCompiler diagnosticsForScriptDictionary:script];
+    if(diagnostics.count == 0) {
+        NSUInteger bytes = [source lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+        [self _showAlertWithTitle:@"문제 없음"
+                          message:[NSString stringWithFormat:@"유효성, 실행 한도와 무한 반복을 검사했습니다.\n소스 크기 %lu / %lu bytes",
+                                   (unsigned long)bytes,
+                                   (unsigned long)ARILabelScriptMaximumSourceBytes]];
+        return;
+    }
+
+    NSUInteger displayedCount = MIN((NSUInteger)8, diagnostics.count);
+    NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithCapacity:displayedCount + 1];
+    for(NSUInteger index = 0; index < displayedCount; index++) {
+        [lines addObject:[NSString stringWithFormat:@"• %@", diagnostics[index]]];
+    }
+    if(diagnostics.count > displayedCount) {
+        [lines addObject:[NSString stringWithFormat:@"…외 %lu개", (unsigned long)(diagnostics.count - displayedCount)]];
+    }
+    [self _showAlertWithTitle:[NSString stringWithFormat:@"경고 %lu개", (unsigned long)diagnostics.count]
+                      message:[lines componentsJoinedByString:@"\n"]];
 }
 
 - (NSString *)_currentSourceForUndo {
@@ -2358,11 +2541,8 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     return [ARILabelScriptCompiler sourceFromScriptDictionary:script error:nil];
 }
 
-- (void)_recordUndoSnapshotIfNeeded {
-    if(!_isRootController) {
-        return;
-    }
-    NSString *source = [self _currentSourceForUndo];
+- (void)_recordUndoSource:(NSString *)source {
+    if(!_isRootController) return;
     if(source.length == 0) {
         return;
     }
@@ -2378,8 +2558,27 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     if(!mutation) {
         return;
     }
-    [self _recordUndoSnapshotIfNeeded];
+
+    NSString *sourceBeforeMutation = _isRootController ? [self _currentSourceForUndo] : nil;
     mutation();
+
+    if(_isRootController) {
+        NSError *validationError = nil;
+        NSString *sourceAfterMutation = [ARILabelScriptCompiler sourceFromScriptDictionary:_rootScript
+                                                                                      error:&validationError];
+        if(sourceAfterMutation.length == 0) {
+            [self _restoreRootScriptFromSource:sourceBeforeMutation];
+            [self _showAlertWithTitle:@"편집 취소"
+                              message:validationError.localizedDescription ?: @"이 변경은 스크립트 한도를 초과합니다."];
+            return;
+        }
+        if([sourceAfterMutation isEqualToString:sourceBeforeMutation]) {
+            [self _rebuildRows];
+            return;
+        }
+        [self _recordUndoSource:sourceBeforeMutation];
+    }
+
     [self _rebuildRows];
 }
 
@@ -2451,7 +2650,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
 
 - (void)_finishClosingEditor {
     if(self.navigationController.presentingViewController && self.navigationController.viewControllers.firstObject == self) {
-        [self.navigationController dismissViewControllerAnimated:YES completion:nil];
+        [self.navigationController dismissViewControllerAnimated:YES completion:self.dismissalHandler];
     } else {
         [self.navigationController popViewControllerAnimated:YES];
     }
@@ -2556,7 +2755,10 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     }
 
     if(row.kind == ARILabelScriptVisualRowKindAction) {
-        [self _presentRowMenuForRow:row sourceView:resolvedSourceView];
+        if(row.collapsible) {
+            [self _setBlockCollapsed:!row.collapsed forBlock:row.block];
+            [self _rebuildRows];
+        }
     }
 }
 
@@ -2607,7 +2809,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
         groupRow.railDepths = nestedRails;
         [rows addObject:groupRow];
 
-        [self _appendInsertRowWithTitle:(containerSteps.count == 0 ? @"액션 추가" : @"맨 앞에 추가")
+        [self _appendInsertRowWithTitle:@"추가"
                                  depth:depth + 1
                              container:containerSteps
                                  index:0
@@ -2617,7 +2819,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
         [self _appendRowsForSteps:containerSteps depth:depth + 1 activeRails:nestedRails rows:rows];
 
         if(containerSteps.count > 0) {
-            [self _appendInsertRowWithTitle:@"맨 뒤에 추가"
+            [self _appendInsertRowWithTitle:@"추가"
                                      depth:depth + 1
                                  container:containerSteps
                                      index:containerSteps.count
@@ -2682,7 +2884,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
 - (void)_rebuildRows {
     NSMutableArray<ARILabelScriptVisualRow *> *rows = [NSMutableArray new];
     if(_steps.count > 0) {
-        [self _appendInsertRowWithTitle:@"맨 앞에 추가"
+        [self _appendInsertRowWithTitle:@"추가"
                                  depth:0
                              container:_steps
                                  index:0
@@ -2691,7 +2893,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     }
     [self _appendRowsForSteps:_steps depth:0 activeRails:@[] rows:rows];
     if(_steps.count > 0) {
-        [self _appendInsertRowWithTitle:@"맨 뒤에 추가"
+        [self _appendInsertRowWithTitle:@"추가"
                                  depth:0
                              container:_steps
                                  index:_steps.count
@@ -2703,7 +2905,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
         row.kind = ARILabelScriptVisualRowKindEmpty;
         row.accessoryKind = ARILabelScriptVisualAccessoryKindInsert;
         row.depth = 0;
-        row.title = @"액션이 없습니다";
+        row.title = @"추가";
         row.symbolName = @"plus.circle";
         row.tintColor = [UIColor secondaryLabelColor];
         row.insertionContainer = _steps;
@@ -2812,14 +3014,14 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
                                                                                                                   completion:completion];
     UINavigationController *navigationController = [[UINavigationController alloc] initWithRootViewController:controller];
     navigationController.modalPresentationStyle = UIModalPresentationPageSheet;
-    [self presentViewController:navigationController animated:YES completion:nil];
+    [self _presentEditorControllerWhenPossible:navigationController attempts:0];
 }
 
 - (void)_presentModalWeekdayPickerWithDays:(NSArray<NSNumber *> *)days completion:(ARILabelScriptWeekdayPickerCompletion)completion {
     ARILabelScriptInlineWeekdayPickerController *controller = [[ARILabelScriptInlineWeekdayPickerController alloc] initWithDays:days completion:completion];
     UINavigationController *navigationController = [[UINavigationController alloc] initWithRootViewController:controller];
     navigationController.modalPresentationStyle = UIModalPresentationPageSheet;
-    [self presentViewController:navigationController animated:YES completion:nil];
+    [self _presentEditorControllerWhenPossible:navigationController attempts:0];
 }
 
 - (void)_presentConditionCatalogWithTitle:(NSString *)title
@@ -2831,7 +3033,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
                                                                                                             selectionHandler:selection];
     UINavigationController *navigationController = [[UINavigationController alloc] initWithRootViewController:controller];
     navigationController.modalPresentationStyle = UIModalPresentationPageSheet;
-    [self presentViewController:navigationController animated:YES completion:nil];
+    [self _presentEditorControllerWhenPossible:navigationController attempts:0];
 }
 
 - (void)_presentInlineConditionTypeSheetForBlock:(NSMutableDictionary *)block {
@@ -2855,7 +3057,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     }];
     UINavigationController *navigationController = [[UINavigationController alloc] initWithRootViewController:controller];
     navigationController.modalPresentationStyle = UIModalPresentationPageSheet;
-    [self presentViewController:navigationController animated:YES completion:nil];
+    [self _presentEditorControllerWhenPossible:navigationController attempts:0];
 }
 
 - (void)_presentConditionQueryInputForCondition:(NSMutableDictionary *)condition type:(NSString *)conditionType {
@@ -2866,7 +3068,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
                      keyboardType:UIKeyboardTypeDefault
                        completion:^(NSString *input) {
         [self _mutateScript:^{
-            condition[@"query"] = input ?: @"";
+            condition[@"query"] = ARILabelScriptInlineLimitedString(input, ARILabelScriptMaximumQueryLength);
         }];
     }];
 }
@@ -2882,6 +3084,8 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
             double value = [input doubleValue];
             if([conditionType hasPrefix:@"battery_"]) {
                 value = MAX(0.0, MIN(100.0, value));
+            } else {
+                value = MAX(-273.15, MIN(1000.0, value));
             }
             condition[@"value"] = @(value);
         }];
@@ -2963,7 +3167,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
                          keyboardType:UIKeyboardTypeDefault
                            completion:^(NSString *input) {
             [self _mutateScript:^{
-                row.block[@"text"] = input ?: @"";
+                row.block[@"text"] = ARILabelScriptInlineLimitedString(input, ARILabelScriptMaximumTextLength);
             }];
         }];
         return;
@@ -2977,7 +3181,8 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
                          keyboardType:UIKeyboardTypeDecimalPad
                            completion:^(NSString *input) {
             [self _mutateScript:^{
-                row.block[@"seconds"] = @(MAX(0.0, [input doubleValue]));
+                double secondsValue = [input doubleValue];
+                row.block[@"seconds"] = @(MIN(ARILabelScriptMaximumWaitSeconds, MAX(0.0, secondsValue)));
             }];
         }];
         return;
@@ -2991,7 +3196,8 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
                          keyboardType:UIKeyboardTypeNumberPad
                            completion:^(NSString *input) {
             [self _mutateScript:^{
-                row.block[@"times"] = @(MAX(0, [input integerValue]));
+                NSInteger count = [input integerValue];
+                row.block[@"times"] = @(MIN(ARILabelScriptMaximumRepeatCount, MAX(0, count)));
             }];
         }];
         return;
@@ -3014,6 +3220,64 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     }];
 }
 
+- (void)_copyBlockToPasteboard:(NSDictionary *)block {
+    NSDictionary *probe = @{ @"loop": @NO, @"steps": block ? @[ block ] : @[] };
+    NSError *error = nil;
+    if(![ARILabelScriptCompiler validateScriptDictionary:probe error:&error]) {
+        [self _showAlertWithTitle:@"복사 실패" message:error.localizedDescription ?: @"블록이 유효하지 않습니다."];
+        return;
+    }
+
+    NSData *data = [NSJSONSerialization dataWithJSONObject:block options:NSJSONWritingPrettyPrinted error:&error];
+    if(!data || data.length > ARILabelScriptMaximumSourceBytes) {
+        NSString *message = error.localizedDescription ?: @"블록이 허용된 크기를 초과했습니다.";
+        [self _showAlertWithTitle:@"복사 실패" message:message];
+        return;
+    }
+
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+    [UIPasteboard generalPasteboard].items = @[@{
+        kARILabelScriptBlockPasteboardType: data,
+        @"public.json": data,
+        @"public.utf8-plain-text": text
+    }];
+}
+
+- (void)_pasteBlockFromPasteboardIntoContainer:(NSMutableArray *)container atIndex:(NSInteger)index {
+    UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
+    NSData *data = [pasteboard dataForPasteboardType:kARILabelScriptBlockPasteboardType];
+    if(!data) {
+        NSString *text = pasteboard.string;
+        data = [text isKindOfClass:[NSString class]] ? [text dataUsingEncoding:NSUTF8StringEncoding] : nil;
+    }
+    if(data.length == 0 || data.length > ARILabelScriptMaximumSourceBytes) {
+        [self _showAlertWithTitle:@"붙여넣기 실패" message:@"클립보드에 유효한 Atria 블록이 없거나 크기 제한을 초과했습니다."];
+        return;
+    }
+
+    NSError *error = nil;
+    id object = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:&error];
+    if(![object isKindOfClass:[NSDictionary class]]) {
+        [self _showAlertWithTitle:@"붙여넣기 실패" message:error.localizedDescription ?: @"클립보드 JSON의 최상위 값은 블록이어야 합니다."];
+        return;
+    }
+
+    NSDictionary *probe = @{ @"loop": @NO, @"steps": @[ object ] };
+    if(![ARILabelScriptCompiler validateScriptDictionary:probe error:&error]) {
+        [self _showAlertWithTitle:@"붙여넣기 실패" message:error.localizedDescription ?: @"지원하지 않는 블록입니다."];
+        return;
+    }
+
+    NSMutableDictionary *block = ARILabelScriptInlineMutableDictionaryValue(ARILabelScriptInlineDeepMutableCopy(object));
+    NSMutableArray *targetContainer = container ?: _steps;
+    NSInteger insertionIndex = MAX(0, MIN(index, (NSInteger)targetContainer.count));
+    [self _mutateScript:^{
+        [targetContainer insertObject:block atIndex:insertionIndex];
+        _selectedInsertionContainer = nil;
+        _selectedInsertionIndex = 0;
+    }];
+}
+
 - (void)_presentAddActionSheetFromView:(UIView *)sourceView rect:(CGRect)rect container:(NSMutableArray *)container index:(NSInteger)index {
     ARILabelScriptActionCatalogController *controller = [[ARILabelScriptActionCatalogController alloc] initWithInitialQuery:@""
                                                                                                             selectionHandler:^(NSString *type) {
@@ -3025,7 +3289,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
         navigationController.popoverPresentationController.sourceView = sourceView ?: self.view;
         navigationController.popoverPresentationController.sourceRect = sourceView ? rect : CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1.0, 1.0);
     }
-    [self presentViewController:navigationController animated:YES completion:nil];
+    [self _presentEditorControllerWhenPossible:navigationController attempts:0];
 }
 
 - (void)addButtonTapped {
@@ -3049,7 +3313,7 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
         navigationController.popoverPresentationController.sourceView = sourceView ?: self.view;
         navigationController.popoverPresentationController.sourceRect = sourceView ? sourceView.bounds : CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1.0, 1.0);
     }
-    [self presentViewController:navigationController animated:YES completion:nil];
+    [self _presentEditorControllerWhenPossible:navigationController attempts:0];
 }
 
 - (void)_presentRowMenuForRow:(ARILabelScriptVisualRow *)row sourceView:(UIView *)sourceView {
@@ -3075,6 +3339,18 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
             [self _rebuildRows];
         }]];
     }
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"복사"
+                                              style:UIAlertActionStyleDefault
+                                            handler:^(__unused UIAlertAction *action) {
+        [self _copyBlockToPasteboard:row.block];
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"붙여넣기 아래"
+                                              style:UIAlertActionStyleDefault
+                                            handler:^(__unused UIAlertAction *action) {
+        [self _pasteBlockFromPasteboardIntoContainer:row.container atIndex:row.index + 1];
+    }]];
 
     [sheet addAction:[UIAlertAction actionWithTitle:@"복제"
                                               style:UIAlertActionStyleDefault
@@ -3182,13 +3458,163 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
     [self _finishClosingEditor];
 }
 
+- (ARILabelScriptVisualRow *)_dropTargetRowForProposedIndexPath:(NSIndexPath *)proposedIndexPath {
+    if(_rows.count == 0 || (proposedIndexPath && proposedIndexPath.section != [self _blockSection])) {
+        return nil;
+    }
+
+    NSInteger proposedRow = proposedIndexPath ? proposedIndexPath.row : (NSInteger)_rows.count - 1;
+    proposedRow = MAX(0, MIN(proposedRow, (NSInteger)_rows.count - 1));
+    ARILabelScriptVisualRow *row = _rows[proposedRow];
+    if(row.kind == ARILabelScriptVisualRowKindAction ||
+       row.kind == ARILabelScriptVisualRowKindInsert ||
+       row.kind == ARILabelScriptVisualRowKindEmpty) {
+        return row;
+    }
+
+    // Container titles enter their body; container endings stay inside that body.
+    NSInteger direction = row.kind == ARILabelScriptVisualRowKindGroup ? 1 : -1;
+    for(NSInteger index = proposedRow + direction;
+        index >= 0 && index < (NSInteger)_rows.count;
+        index += direction) {
+        ARILabelScriptVisualRow *candidate = _rows[index];
+        if(candidate.kind == ARILabelScriptVisualRowKindInsert ||
+           candidate.kind == ARILabelScriptVisualRowKindEmpty) {
+            return candidate;
+        }
+        if(candidate.kind == ARILabelScriptVisualRowKindAction) {
+            break;
+        }
+    }
+    return nil;
+}
+
+- (BOOL)_resolveDropForBlock:(NSMutableDictionary *)block
+             sourceContainer:(NSMutableArray *)sourceContainer
+           proposedIndexPath:(NSIndexPath *)proposedIndexPath
+        destinationContainer:(NSMutableArray **)destinationContainer
+            destinationIndex:(NSInteger *)destinationIndex
+                    usesSlot:(BOOL *)usesSlot {
+    ARILabelScriptVisualRow *row = [self _dropTargetRowForProposedIndexPath:proposedIndexPath];
+    if(!block || !sourceContainer || !row) {
+        return NO;
+    }
+
+    BOOL slot = row.kind == ARILabelScriptVisualRowKindInsert || row.kind == ARILabelScriptVisualRowKindEmpty;
+    NSMutableArray *container = slot ? row.insertionContainer : row.container;
+    NSInteger index = slot ? row.insertionIndex : row.index;
+    if(!container || ![self _container:container existsInSteps:_steps] ||
+       [self _container:container existsInSteps:@[ block ]]) {
+        return NO;
+    }
+
+    if(destinationContainer) *destinationContainer = container;
+    if(destinationIndex) *destinationIndex = index;
+    if(usesSlot) *usesSlot = slot;
+    return YES;
+}
+
+- (NSIndexPath *)_indexPathForBlock:(NSMutableDictionary *)block {
+    for(NSInteger index = 0; index < (NSInteger)_rows.count; index++) {
+        ARILabelScriptVisualRow *row = _rows[index];
+        if(row.kind == ARILabelScriptVisualRowKindAction && row.block == block) {
+            return [NSIndexPath indexPathForRow:index inSection:[self _blockSection]];
+        }
+    }
+    return nil;
+}
+
+- (BOOL)tableView:(__unused UITableView *)tableView canHandleDropSession:(id<UIDropSession>)session {
+    return session.localDragSession != nil && session.items.count == 1;
+}
+
+- (UITableViewDropProposal *)tableView:(__unused UITableView *)tableView
+                  dropSessionDidUpdate:(id<UIDropSession>)session
+               withDestinationIndexPath:(NSIndexPath *)destinationIndexPath {
+    NSDictionary *payload = [session.items.firstObject.localObject isKindOfClass:[NSDictionary class]]
+        ? session.items.firstObject.localObject
+        : nil;
+    NSMutableArray *container = [payload[@"container"] isKindOfClass:[NSMutableArray class]]
+        ? payload[@"container"]
+        : nil;
+    NSMutableDictionary *block = [payload[@"block"] isKindOfClass:[NSMutableDictionary class]]
+        ? payload[@"block"]
+        : nil;
+    if(![self _resolveDropForBlock:block
+                    sourceContainer:container
+                  proposedIndexPath:destinationIndexPath
+               destinationContainer:nil
+                   destinationIndex:nil
+                           usesSlot:nil]) {
+        return [[UITableViewDropProposal alloc] initWithDropOperation:UIDropOperationForbidden];
+    }
+    return [[UITableViewDropProposal alloc] initWithDropOperation:UIDropOperationMove
+                                                           intent:UITableViewDropIntentInsertAtDestinationIndexPath];
+}
+
+- (void)tableView:(__unused UITableView *)tableView
+performDropWithCoordinator:(id<UITableViewDropCoordinator>)coordinator {
+    id<UITableViewDropItem> dropItem = coordinator.items.firstObject;
+    NSDictionary *payload = [dropItem.dragItem.localObject isKindOfClass:[NSDictionary class]]
+        ? dropItem.dragItem.localObject
+        : nil;
+    NSMutableDictionary *block = [payload[@"block"] isKindOfClass:[NSMutableDictionary class]]
+        ? payload[@"block"]
+        : nil;
+    NSMutableArray *container = [payload[@"container"] isKindOfClass:[NSMutableArray class]]
+        ? payload[@"container"]
+        : nil;
+    NSMutableArray *destinationContainer = nil;
+    NSInteger destinationIndex = 0;
+    BOOL usesSlot = NO;
+    NSUInteger sourceIndex = [container indexOfObjectIdenticalTo:block];
+
+    if(!dropItem || !block || !container || sourceIndex == NSNotFound ||
+       ![self _resolveDropForBlock:block
+                    sourceContainer:container
+                  proposedIndexPath:coordinator.destinationIndexPath
+               destinationContainer:&destinationContainer
+                   destinationIndex:&destinationIndex
+                           usesSlot:&usesSlot]) {
+        return;
+    }
+
+    NSInteger insertionIndex = destinationIndex;
+    if(destinationContainer == container && usesSlot && (NSInteger)sourceIndex < insertionIndex) {
+        insertionIndex--;
+    }
+    insertionIndex = MAX(0, MIN(insertionIndex,
+                                (NSInteger)destinationContainer.count - (destinationContainer == container ? 1 : 0)));
+    if(destinationContainer == container && (NSInteger)sourceIndex == insertionIndex) {
+        NSIndexPath *currentIndexPath = [self _indexPathForBlock:block];
+        if(currentIndexPath) {
+            [coordinator dropItem:dropItem.dragItem toRowAtIndexPath:currentIndexPath];
+        }
+        return;
+    }
+
+    [self _mutateScript:^{
+        [container removeObjectAtIndex:sourceIndex];
+        NSInteger safeIndex = MAX(0, MIN(insertionIndex, (NSInteger)destinationContainer.count));
+        [destinationContainer insertObject:block atIndex:safeIndex];
+        _selectedInsertionContainer = nil;
+        _selectedInsertionIndex = 0;
+    }];
+
+    // Rebuild happens synchronously in _mutateScript:, so coordinator never displays stale cells.
+    NSIndexPath *finalIndexPath = [self _indexPathForBlock:block];
+    if(finalIndexPath) {
+        [coordinator dropItem:dropItem.dragItem toRowAtIndexPath:finalIndexPath];
+    }
+}
+
 - (NSInteger)numberOfSectionsInTableView:(__unused UITableView *)tableView {
     return _isRootController ? 2 : 1;
 }
 
 - (NSInteger)tableView:(__unused UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if(_isRootController && section == 0) {
-        return 1;
+        return 3;
     }
     return _rows.count;
 }
@@ -3202,6 +3628,31 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     if(_isRootController && indexPath.section == 0) {
+        if(indexPath.row == 1) {
+            static NSString *diagnosticsIdentifier = @"ScriptDiagnostics";
+            UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:diagnosticsIdentifier];
+            if(!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:diagnosticsIdentifier];
+            cell.textLabel.text = @"스크립트 진단";
+            cell.detailTextLabel.text = @"유효성·실행 한도·무한 반복 검사";
+            cell.imageView.image = [UIImage systemImageNamed:@"checkmark.shield"];
+            cell.imageView.tintColor = kARIPrefTintColor;
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+            return cell;
+        }
+        if(indexPath.row == 2) {
+            static NSString *pasteIdentifier = @"PasteScriptBlock";
+            UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:pasteIdentifier];
+            if(!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:pasteIdentifier];
+            cell.textLabel.text = @"블록 붙여넣기";
+            cell.detailTextLabel.text = _selectedInsertionContainer ? @"선택한 위치에 추가" : @"스크립트에 추가";
+            cell.imageView.image = [UIImage systemImageNamed:@"doc.on.clipboard"];
+            cell.imageView.tintColor = kARIPrefTintColor;
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+            return cell;
+        }
+
         static NSString *switchIdentifier = @"LoopSwitch";
         UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:switchIdentifier];
         if(!cell) {
@@ -3237,6 +3688,18 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
         [strongSelf _handleTokenTap:tokenIdentifier forRow:row];
     };
     cell.tokenHandler = tokenHandler;
+    cell.dragItemProvider = ^UIDragItem *{
+        if(row.kind != ARILabelScriptVisualRowKindAction || !row.block || row.container.count == 0) {
+            return nil;
+        }
+        NSItemProvider *provider = [[NSItemProvider alloc] initWithObject:row.title ?: @"Atria 블록"];
+        UIDragItem *item = [[UIDragItem alloc] initWithItemProvider:provider];
+        item.localObject = @{ @"block": row.block, @"container": row.container };
+
+        UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+        [feedback impactOccurred];
+        return item;
+    };
     cell.accessoryHandler = ^{
         __strong typeof(weakSelf) strongSelf = weakSelf;
         __strong typeof(weakCell) strongCell = weakCell;
@@ -3268,6 +3731,16 @@ static NSArray<ARILabelScriptVisualPart *> *ARILabelScriptInlineConditionParts(N
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if(_isRootController && indexPath.section == 0) {
+        if(indexPath.row == 1) {
+            [self _showScriptDiagnostics];
+        } else if(indexPath.row == 2) {
+            [self _normalizeSelectedInsertionAnchor];
+            NSMutableArray *container = _selectedInsertionContainer ?: _steps;
+            NSInteger index = _selectedInsertionContainer ? _selectedInsertionIndex : (NSInteger)_steps.count;
+            [self _pasteBlockFromPasteboardIntoContainer:container atIndex:index];
+        }
+    }
 }
 
 @end

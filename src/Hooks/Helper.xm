@@ -7,42 +7,84 @@
 #import "../../Shared/ARIPathUtils.h"
 #import "../Manager/ARITweakManager.h"
 #import "../Manager/ARIEditManager.h"
-#import "../UI/Splash/ARISplashViewController.h"
 #import "../UI/Label/ARILabelView.h"
 #include <dlfcn.h>
 
+static __weak UIResponder *ARIActiveFirstResponder = nil;
+
+@interface UIResponder (ARIACTiveFirstResponderLookup)
+- (void)_atriaCaptureActiveFirstResponder:(id)sender;
+@end
+
+@implementation UIResponder (ARIACTiveFirstResponderLookup)
+- (void)_atriaCaptureActiveFirstResponder:(id)sender {
+    ARIActiveFirstResponder = self;
+}
+@end
+
+static BOOL ARIPageLabelIsBeingEdited(void) {
+    ARIActiveFirstResponder = nil;
+    [[UIApplication sharedApplication] sendAction:@selector(_atriaCaptureActiveFirstResponder:)
+                                               to:nil
+                                             from:nil
+                                         forEvent:nil];
+
+    UIView *view = [ARIActiveFirstResponder isKindOfClass:[UIView class]] ? (UIView *)ARIActiveFirstResponder : nil;
+    while(view) {
+        if([view isKindOfClass:[ARILabelView class]]) return YES;
+        view = view.superview;
+    }
+    return NO;
+}
+
+static void ARICloseEditor(void) {
+    [[ARIEditManager sharedInstance] toggleEditView:NO withTargetLocation:nil];
+}
+
+
+%group LegacyIconControllerLifecycle
 
 %hook SBIconController 
 
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
-    [[ARIEditManager sharedInstance] toggleEditView:NO withTargetLocation:nil];
-
-    ARITweakManager *manager = [ARITweakManager sharedInstance];
-    if(![manager boolValueForKey:ARIDidSplashPreferenceKey]) {
-        ARISplashViewController *splash = [[ARISplashViewController alloc] initWithSubtitle:@"Getting started"];
-        [splash addEntry:@"3D touch an icon or triple tap your wallpaper to edit layout" image:[UIImage systemImageNamed:[manager firmwareVersion] >= 14 ? @"square.grid.3x3.fill.square" : @"square"]];
-        [splash addEntry:@"Drag the slider on the editor to see changes in real-time" image:[UIImage systemImageNamed:@"slider.horizontal.3"]];
-        [splash addEntry:@"Tap the label underneath the slider and type in a value for precise control" image:[UIImage systemImageNamed:@"wand.and.rays"]];
-        [splash addEntry:@"Tap this icon on the editor to edit layout for the current page only" image:[UIImage systemImageNamed:@"doc"]];
-        [splash addEntry:@"See the preference pane in the Settings app for even more options" image:[UIImage systemImageNamed:[manager firmwareVersion] >= 14 ? @"gearshape" : @"gear"]];
-        [splash addEntry:@"If you encounter a bug, don't hesitate to report it! Please include your device and iOS version." image:[UIImage systemImageNamed:[manager firmwareVersion] >= 14 ? @"ladybug" : @"ant"]];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.0 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            //[[objc_getClass("SBIconController") sharedInstance] presentViewController:splash animated:YES completion:nil];
-        });
-    }
+    ARICloseEditor();
 }
 
 - (void)viewDidDisappear:(BOOL)animated {
     %orig;
-    [[ARIEditManager sharedInstance] toggleEditView:NO withTargetLocation:nil];
+    ARICloseEditor();
 }
 
 - (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id)coordinator {
     %orig;
-    [[ARIEditManager sharedInstance] toggleEditView:NO withTargetLocation:nil];
+    ARICloseEditor();
 }
 
+%end
+%end
+
+
+%group RootFolderControllerLifecycle
+
+%hook SBRootFolderController
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    ARICloseEditor();
+}
+
+- (void)viewDidDisappear:(BOOL)animated {
+    %orig;
+    ARICloseEditor();
+}
+
+- (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id)coordinator {
+    %orig;
+    ARICloseEditor();
+}
+
+%end
 %end
 
 
@@ -50,7 +92,7 @@
 
 - (void)setHidden:(BOOL)arg {
     %orig;
-    [[ARIEditManager sharedInstance] toggleEditView:NO withTargetLocation:nil];
+    ARICloseEditor();
 }
 
 %end
@@ -59,8 +101,11 @@
 %hook SBIconScrollView
 
 - (void)scrollRectToVisible:(CGRect)rect animated:(BOOL)animated {
-    // Prevents the scroll view from scrolling on its own when typing in text fields
-    // for homescreen page labels. Crossing my fingers this doesn't break anything.
+    // Suppress the keyboard-driven jump only while Atria's page label is the
+    // active editor. Other SpringBoard scrolling and accessibility requests
+    // must retain the system behavior.
+    if(ARIPageLabelIsBeingEdited()) return;
+    %orig(rect, animated);
 }
 
 %end
@@ -134,6 +179,12 @@
 	if([manager isEnabled]) {
 		NSLog(@"[Atria]: Loading hooks from %s", __FILE__);
 		%init();
+
+        if(NSProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 17) {
+            %init(RootFolderControllerLifecycle);
+        } else {
+            %init(LegacyIconControllerLifecycle);
+        }
 
         if([manager isDeviceIPad]) {
             %init(TodayViewFixiPad);

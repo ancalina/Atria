@@ -42,7 +42,6 @@
         self.img = img;
         self.img.tintColor = [UIColor labelColor];
 
-        [self layoutIfNeeded];
     }
     return self;
 }

@@ -8,8 +8,126 @@
 
 #import "../Hooks/Shared.h"
 #import "../../Shared/ARIPathUtils.h"
+#import "../../Shared/ARIPreferenceMigration.h"
 
 #import <objc/runtime.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/utsname.h>
+
+// ARITweakManager is created from Logos constructors while SpringBoard is
+// still running its dyld initializers. Asking UIKit for userInterfaceIdiom at
+// that point can recursively start SpringBoard's application initialization
+// and deadlock in FrontBoard/BoardServices (observed on iOS 15 RootHide).
+// The hardware family identifier is available without starting UIKit. Match
+// the stable family prefix rather than maintaining a list of device models.
+static BOOL ARIHostIsIPadWithoutStartingUIKit(void) {
+    const char *modelIdentifier = getenv("SIMULATOR_MODEL_IDENTIFIER");
+    struct utsname systemInfo = {};
+    if(!modelIdentifier || !*modelIdentifier) {
+        if(uname(&systemInfo) != 0) return NO;
+        modelIdentifier = systemInfo.machine;
+    }
+    return modelIdentifier && strncmp(modelIdentifier, "iPad", 4) == 0;
+}
+
+static UIView *ARIFindSubviewOfClass(UIView *view, Class targetClass) {
+    if(!view || !targetClass) return nil;
+    if([view isKindOfClass:targetClass]) return view;
+    for(UIView *subview in view.subviews) {
+        UIView *match = ARIFindSubviewOfClass(subview, targetClass);
+        if(match) return match;
+    }
+    return nil;
+}
+
+static id ARISafeValueForKey(id object, NSString *key) {
+    if(!object || ![key isKindOfClass:[NSString class]] || key.length == 0) return nil;
+    @try {
+        return [object valueForKey:key];
+    } @catch(__unused NSException *exception) {
+        return nil;
+    }
+}
+
+// Read an already-populated object backing ivar without invoking a private
+// getter. In particular, -[SBRootFolder(WithDock) dock] is lazy on iOS 15 and
+// creates a Dock model when _dock is nil; calling it from maxNumberOfIcons can
+// therefore re-enter icon-model construction. Unknown layouts fail closed.
+static id ARIExistingObjectIvar(id object, const char *name) {
+    if(!object || !name) return nil;
+    Ivar ivar = class_getInstanceVariable(object_getClass(object), name);
+    const char *encoding = ivar ? ivar_getTypeEncoding(ivar) : NULL;
+    if(!encoding || encoding[0] != '@') return nil;
+    return object_getIvar(object, ivar);
+}
+
+static id ARIIconControllerSharedInstance(void) {
+    Class controllerClass = objc_getClass("SBIconController");
+    return [controllerClass respondsToSelector:@selector(sharedInstance)]
+        ? [controllerClass sharedInstance]
+        : nil;
+}
+
+static SBFloatingDockController *ARIFloatingDockControllerSharedInstance(void) {
+    Class controllerClass = objc_getClass("SBFloatingDockController");
+    SBFloatingDockController *controller =
+        [controllerClass respondsToSelector:@selector(_atriaSharedInstance)]
+        ? [controllerClass _atriaSharedInstance]
+        : nil;
+    if(controller) return controller;
+
+    // The initializer capture is the cross-version path, but iOS 13-15 also
+    // exposes the controller from SBIconController.  Use that relationship as
+    // a fallback so a harmless constructor-order change cannot leave the live
+    // user Dock model unidentified.
+    id iconController = ARIIconControllerSharedInstance();
+    return [iconController respondsToSelector:@selector(floatingDockController)]
+        ? [iconController floatingDockController]
+        : nil;
+}
+
+static SBIconListView *ARIUserDockListView(SBRootFolderView *rootFolderView) {
+    Class listViewClass = objc_getClass("SBIconListView");
+    if(!listViewClass) return nil;
+
+    SBIconListView *listView = nil;
+    if(![ARITweakManager isUsingFloatingDock]) {
+        listView = (SBIconListView *)ARISafeValueForKey(rootFolderView, @"_dockListView");
+    } else {
+        SBFloatingDockController *controller = ARIFloatingDockControllerSharedInstance();
+        if([controller respondsToSelector:@selector(userIconListView)]) {
+            listView = [controller userIconListView];
+        }
+        if(!listView) {
+            SBFloatingDockViewController *viewController =
+                [controller respondsToSelector:@selector(floatingDockViewController)]
+                    ? [controller floatingDockViewController]
+                    : (SBFloatingDockViewController *)ARISafeValueForKey(controller, @"_viewController");
+            SBFloatingDockView *dockView =
+                [viewController respondsToSelector:@selector(dockView)]
+                    ? [viewController dockView]
+                    : (SBFloatingDockView *)ARISafeValueForKey(viewController, @"_dockView");
+            listView = (SBIconListView *)ARISafeValueForKey(dockView, @"_userIconListView");
+        }
+    }
+    return [listView isKindOfClass:listViewClass] ? listView : nil;
+}
+
+static void ARILayoutIconListView(SBIconListView *listView) {
+    Class listViewClass = objc_getClass("SBIconListView");
+    if(!listViewClass || ![listView isKindOfClass:listViewClass]) return;
+    if([listView respondsToSelector:@selector(set_atriaNeedsLayout:)]) {
+        listView._atriaNeedsLayout = YES;
+    }
+    if([listView respondsToSelector:@selector(layoutIconsNow)]) {
+        [listView layoutIconsNow];
+        return;
+    }
+    [listView setNeedsLayout];
+    [listView layoutIfNeeded];
+}
 
 @implementation ARITweakManager {
     BOOL _enabled;
@@ -17,18 +135,15 @@
     NSMutableOrderedSet<NSString *> *_orderedSettingKeys;
     NSMutableDictionary<NSString *, ARIOption *> *_optionsRegistry;
     NSMapTable *_listViewModelMap;
-    NSUInteger _firmwareVersion;
     BOOL _deviceIPad;
     BOOL _shyLabelsInstalled;
-    BOOL _griddyInstalled;
+    __weak SBIconListView *_persistentUserDockListView;
 }
 
 @synthesize enabled = _enabled;
 @synthesize preferences = _preferences;
-@synthesize firmwareVersion = _firmwareVersion;
 @synthesize deviceIPad = _deviceIPad;
 @synthesize shyLabelsInstalled = _shyLabelsInstalled;
-@synthesize griddyInstalled = _griddyInstalled;
 @synthesize listViewModelMap = _listViewModelMap;
 
 // Shared instance and init methods
@@ -36,21 +151,16 @@
 - (instancetype)init {
     self = [super init];
     if(self) {
-        // Detect iOS version and model
-        UIDevice *device = [UIDevice currentDevice];
-        _firmwareVersion = [[[device systemVersion] componentsSeparatedByString:@"."][0] integerValue];
-        _deviceIPad = [[device model] hasPrefix:@"iPad"];
+        // This object is first requested before UIApplication initializes, so
+        // detect the host device without starting UIKit.
+        _deviceIPad = ARIHostIsIPadWithoutStartingUIKit();
         // ShyLabels compatibility
         _shyLabelsInstalled = ARIMobileSubstrateDylibPath(@"ShyLabels") != nil;
-        // Griddy compatibility
-        _griddyInstalled = ARIMobileSubstrateDylibPath(@"Griddy") != nil;
         // NSUserDefaults to get what values the user set
         _preferences = [[NSUserDefaults alloc] initWithSuiteName:@"me.lau.AtriaPrefs"];
-        _enabled = [_preferences objectForKey:@"enabled"] ? [[_preferences objectForKey:@"enabled"] boolValue] : YES;
+        id enabledValue = [_preferences objectForKey:@"enabled"];
+        _enabled = [enabledValue isKindOfClass:[NSNumber class]] ? [enabledValue boolValue] : YES;
         _listViewModelMap = [NSMapTable mapTableWithKeyOptions:NSPointerFunctionsWeakMemory valueOptions:NSPointerFunctionsWeakMemory];
-
-        // Migrate old settings
-        [self _migrateSettings];
 
         // Create settings
         _orderedSettingKeys = [[NSMutableOrderedSet alloc] initWithCapacity:50];
@@ -71,9 +181,14 @@
                  defaultValue:@(YES)
                    lowerLimit:0
                    upperLimit:0];
+        [self _registerOption:@"useStepperControls"
+                  translation:nil
+                 defaultValue:@(NO)
+                   lowerLimit:0
+                   upperLimit:0];
         [self _registerOption:@"labelText"
                   translation:nil
-                 defaultValue:@"\%인삿말_한\%."
+                 defaultValue:@"%인삿말_한%."
                    lowerLimit:0
                    upperLimit:0];
         [self _registerOption:@"labelScriptEnabled"
@@ -90,17 +205,17 @@
                   translation:nil
                  defaultValue:@(4)
                    lowerLimit:0
-                   upperLimit:0];
+                   upperLimit:23];
         [self _registerOption:@"customGreetingAfternoonStartHour"
                   translation:nil
                  defaultValue:@(12)
                    lowerLimit:0
-                   upperLimit:0];
+                   upperLimit:23];
         [self _registerOption:@"customGreetingEveningStartHour"
                   translation:nil
                  defaultValue:@(18)
                    lowerLimit:0
-                   upperLimit:0];
+                   upperLimit:23];
         [self _registerOption:@"customGreetingTokensSource"
                   translation:nil
                  defaultValue:@""
@@ -170,7 +285,7 @@
                   translation:nil
                  defaultValue:@(3)
                    lowerLimit:0
-                   upperLimit:0];
+                   upperLimit:20];
 
         // Homescreen
         [self _registerOption:@"hs_rows"
@@ -244,9 +359,9 @@
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
 
-        // Dock options
-        // For some reason, on iOS 15 only (not 13-14 or 16+), calling +isFloatingDockSupported leads to a respring loop.
-        // Once SpringBoard launches, this option will be re-registered to adjust the default value if floating dock is enabled.
+        // Do not query floating-dock support while SpringBoard is still running
+        // dyld initializers. Start with the regular Dock default and update the
+        // option after SpringBoard has finished launching, as upstream Atria did.
         [self _registerOption:@"dock_columns"
                   translation:@"열"
                  defaultValue:@(4)
@@ -364,6 +479,10 @@
                  defaultValue:@(0)
                    lowerLimit:-200.0F
                    upperLimit:200.0F];
+
+        // Migrate after the registry exists so legacy per-page keys can be
+        // distinguished from unrelated PageN metadata.
+        [self _migrateSettings];
     }
     return self;
 }
@@ -378,54 +497,88 @@
 }
 
 - (void)_migrateSettings {
-    // Horrible code but I just need it to work, this only runs once ever
-    if([self intValueForKey:@"_settingsMigrationVersion"] >= 1) {
-        return;
+    NSInteger migrationVersion = [[_preferences objectForKey:@"_settingsMigrationVersion"] integerValue];
+    if(migrationVersion >= 2) return;
+
+    BOOL migrationSucceeded = YES;
+    if(migrationVersion < 1) {
+        migrationSucceeded = [self _migrateSettingFromKey:@"saveState" toKey:@"_saveState"];
     }
 
-    // Save state
-    [self _migrateSettingFromKey:@"saveState" toKey:@"_saveState"];
-
-    // Update list of per-page layout enabled list views
-    NSMutableArray *perPage = [(NSArray *)[self rawValueForKey:@"_perPageListViews"] mutableCopy] ?: [NSMutableArray new];
-    NSUInteger itemCount = [perPage count];
-    for(NSUInteger i = 0; i < itemCount; i++) {
-        NSString *newValue = [NSString stringWithFormat:@"Page%@_", [perPage[i] stringByReplacingOccurrencesOfString:@"_" withString:@""]];
-        [perPage replaceObjectAtIndex:i withObject:newValue];
-    }
-    [self setValue:perPage forKey:@"_perPageListViews"];
-
-    NSDictionary *dict = [_preferences dictionaryRepresentation];
-    for(NSString *key in [dict allKeys]) {
-        // Welcome is now renamed to label
-        if([key hasPrefix:@"welcome"]) {
-            NSString *newKey = [key stringByReplacingCharactersInRange:NSMakeRange(0, 7) withString:@"label"];
-            [self _migrateSettingFromKey:key toKey:newKey];
-            continue;
-        }
-
-        if([key length] <= 3) continue;
-        // Previous per-page layout prefix was formatted as _%d_ and now is Page%d_
-        NSString *sub = [key substringToIndex:3];
-        if([sub hasPrefix:@"_"] && [sub hasSuffix:@"_"]) {
-            NSString *newKey = [NSString
-                stringWithFormat:@"Page%@_%@",
-                                 [sub stringByReplacingOccurrencesOfString:@"_"
-                                                                withString:@""],
-                                 [key stringByReplacingOccurrencesOfString:sub
-                                                                withString:@""]];
-            [self _migrateSettingFromKey:key toKey:newKey];
-            continue;
+    NSMutableOrderedSet<NSString *> *perPagePrefixes = [NSMutableOrderedSet new];
+    NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *pageKeysByPrefix = [NSMutableDictionary new];
+    id storedPerPage = [_preferences objectForKey:@"_perPageListViews"];
+    if([storedPerPage isKindOfClass:[NSArray class]]) {
+        for(id value in (NSArray *)storedPerPage) {
+            NSString *prefix = ARINormalizedPagePrefix(value);
+            if(prefix) [perPagePrefixes addObject:prefix];
         }
     }
 
-    // Set migration Version
-    [self setValue:@(1) forKey:@"_settingsMigrationVersion"];
+    NSDictionary *domain = [[NSUserDefaults standardUserDefaults]
+        persistentDomainForName:@"me.lau.AtriaPrefs"] ?: [_preferences dictionaryRepresentation];
+    for(id candidateKey in domain.allKeys) {
+        if(![candidateKey isKindOfClass:[NSString class]]) continue;
+        NSString *key = candidateKey;
+        NSString *normalizedKey = ARINormalizedPreferenceKey(key);
+        if(![normalizedKey isKindOfClass:[NSString class]] || normalizedKey.length == 0) continue;
+
+        if(![normalizedKey isEqualToString:key]) {
+            id oldValue = [_preferences objectForKey:key];
+            if(oldValue && ![_preferences objectForKey:normalizedKey]) {
+                id migratedValue = [self _validatedPreferenceValue:oldValue forKey:normalizedKey] ?: oldValue;
+                [_preferences setObject:migratedValue forKey:normalizedKey];
+                if(![[_preferences objectForKey:normalizedKey] isEqual:migratedValue]) {
+                    migrationSucceeded = NO;
+                    continue;
+                }
+            }
+            if(!oldValue || [_preferences objectForKey:normalizedKey]) {
+                [_preferences removeObjectForKey:key];
+            }
+        }
+
+        NSString *prefix = nil;
+        NSString *baseKey = nil;
+        if(ARIParsePagePreferenceKey(normalizedKey, &prefix, &baseKey) && baseKey.length > 0) {
+            ARIOption *option = _optionsRegistry[baseKey];
+            if(option.accessibleWithEditor) {
+                NSMutableSet<NSString *> *pageKeys = pageKeysByPrefix[prefix];
+                if(!pageKeys) {
+                    pageKeys = [NSMutableSet new];
+                    pageKeysByPrefix[prefix] = pageKeys;
+                }
+                [pageKeys addObject:baseKey];
+            }
+        }
+    }
+
+    // createCustomForListView: freezes the complete editor state, including
+    // both home-grid dimensions. Reconstruct a marker only from that coherent
+    // signature; a lone stale PageN key must not silently re-enable overrides.
+    [pageKeysByPrefix enumerateKeysAndObjectsUsingBlock:^(NSString *prefix,
+                                                          NSSet<NSString *> *pageKeys,
+                                                          BOOL *stop) {
+        (void)stop;
+        if([pageKeys containsObject:@"hs_rows"] && [pageKeys containsObject:@"hs_columns"]) {
+            [perPagePrefixes addObject:prefix];
+        }
+    }];
+
+    if(migrationSucceeded) {
+        [self setValue:perPagePrefixes.array forKey:@"_perPageListViews"];
+        [self setValue:@(2) forKey:@"_settingsMigrationVersion"];
+    }
 }
 
-- (void)_migrateSettingFromKey:(NSString *)oldKey toKey:(NSString *)newKey {
-    [_preferences setObject:[self rawValueForKey:oldKey] forKey:newKey];
+- (BOOL)_migrateSettingFromKey:(NSString *)oldKey toKey:(NSString *)newKey {
+    id oldValue = [_preferences objectForKey:oldKey];
+    if(oldValue && ![_preferences objectForKey:newKey]) {
+        [_preferences setObject:oldValue forKey:newKey];
+        if(![[_preferences objectForKey:newKey] isEqual:oldValue]) return NO;
+    }
     [_preferences removeObjectForKey:oldKey];
+    return YES;
 }
 
 - (void)_registerOption:(NSString *)key
@@ -433,11 +586,11 @@
            defaultValue:(id)defaultValue
              lowerLimit:(float)lower
              upperLimit:(float)upper {
-    float range[] = {lower, upper};
     ARIOption *option = [[ARIOption alloc] initWithKey:key
                                            translation:translation
                                           defaultValue:defaultValue
-                                                 range:range];
+                                            lowerLimit:lower
+                                            upperLimit:upper];
     if(option.accessibleWithEditor)
         [_orderedSettingKeys addObject:option.settingKey];
     [_optionsRegistry setObject:option forKey:option.settingKey];
@@ -450,8 +603,10 @@
     if(!editingLocation) return;
 
     if([editingLocation isEqualToString:@"pagedot"]) {
-        // Will use cached metrics (see hook in PageDots.xm)
-        [[self rootFolderView] layoutPageControlWithMetrics:NULL];
+        // The metrics pointee changes across iOS releases. Reapply the absolute
+        // offset from the last system-produced frame instead of fabricating a
+        // private structure or invoking SpringBoard's method with NULL.
+        [[self rootFolderView] _atriaApplyPageControlOffset];
         return;
     }
 
@@ -465,6 +620,7 @@
     SBRootFolderView *rootFolderView = [self rootFolderView];
 
     void (^updateVisibleIcons)(BOOL finished) = ^void(BOOL finished) {
+        if(!forRoot) return;
         SBIconListView *current = [self currentListView];
         // Update visible columns and rows for current list view. Otherwise, SB doesn't
         // update this until we start scrolling
@@ -475,31 +631,51 @@
     };
 
     void (^applyLayout)() = ^void() {
+        if(!rootFolderView) return;
         if(forDock) {
             // Layout dock icons and set alpha
             if(![[self class] isUsingFloatingDock]) {
-                // -dockListView doesn't exist on 13 but the ivar does
-                SBIconListView *listView = (SBIconListView *)[rootFolderView valueForKeyPath:@"_dockListView"];
-                [[rootFolderView dockView] _atriaUpdateDockForSettingsChanged];
-                [listView layoutIconsNow];
+                SBIconListView *listView = (SBIconListView *)ARISafeValueForKey(rootFolderView, @"_dockListView");
+                SBDockView *dockView = [rootFolderView respondsToSelector:@selector(dockView)] ? [rootFolderView dockView] : nil;
+                if([dockView respondsToSelector:@selector(_atriaUpdateDockForSettingsChanged)]) {
+                    [dockView _atriaUpdateDockForSettingsChanged];
+                }
+                ARILayoutIconListView(listView);
             } else {
-                SBFloatingDockController *fdController = [objc_getClass("SBFloatingDockController") _atriaSharedInstance];
+                SBFloatingDockController *fdController = ARIFloatingDockControllerSharedInstance();
+                SBFloatingDockViewController *fdvc = [fdController respondsToSelector:@selector(floatingDockViewController)]
+                    ? [fdController floatingDockViewController]
+                    : (SBFloatingDockViewController *)ARISafeValueForKey(fdController, @"_viewController");
+                SBFloatingDockView *dockView = [fdvc respondsToSelector:@selector(dockView)]
+                    ? [fdvc dockView]
+                    : (SBFloatingDockView *)ARISafeValueForKey(fdvc, @"_dockView");
                 // Icon list and suggestions
-                [[fdController userIconListView] layoutIconsNow];
-                [[fdController suggestionsIconListView] layoutIconsNow];
-                SBFloatingDockViewController *fdvc = [fdController floatingDockViewController];
+                SBIconListView *userListView = [fdController respondsToSelector:@selector(userIconListView)]
+                    ? [fdController userIconListView]
+                    : (SBIconListView *)ARISafeValueForKey(dockView, @"_userIconListView");
+                SBIconListView *suggestionsListView = [fdController respondsToSelector:@selector(suggestionsIconListView)]
+                    ? [fdController suggestionsIconListView]
+                    : (SBIconListView *)ARISafeValueForKey(dockView, @"_recentIconListView");
+                ARILayoutIconListView(userListView);
+                ARILayoutIconListView(suggestionsListView);
                 // Fix for library pod icon
-                if([fdvc respondsToSelector:@selector(libraryPodIconView)])
-                    [[fdvc libraryPodIconView] _atriaUpdateIconContentScale];
+                SBIconView *libraryPodIconView = [fdvc respondsToSelector:@selector(libraryPodIconView)]
+                    ? [fdvc libraryPodIconView]
+                    : nil;
+                if([libraryPodIconView respondsToSelector:@selector(_atriaUpdateIconContentScale)]) {
+                    [libraryPodIconView _atriaUpdateIconContentScale];
+                }
                 // Update dock background
-                [[fdvc dockView] _atriaUpdateDockForSettingsChanged];
+                if([dockView respondsToSelector:@selector(_atriaUpdateDockForSettingsChanged)]) {
+                    [dockView _atriaUpdateDockForSettingsChanged];
+                }
             }
         }
 
         if(forRoot) {
             // Enumerate list views in root and lay them out as well
-            for(SBIconListView *listView in rootFolderView.iconListViews) {
-                [listView layoutIconsNow];
+            for(SBIconListView *listView in [self allRootListViews]) {
+                ARILayoutIconListView(listView);
             }
         }
     };
@@ -519,23 +695,27 @@
 
 // This lags the device somewhat, so limit this as much as possible!
 - (void)relayoutEntireIconModel {
-    // This will cause the entire icon model to re-layout
-    [[[[objc_getClass("SBIconController") sharedInstance] iconManager] iconModel] layout];
-    // In order to fix the custom widget sizing, we need to call this
+    // This will cause the entire icon model to re-layout.
+    id iconController = ARIIconControllerSharedInstance();
+    SBHIconManager *iconManager = [iconController respondsToSelector:@selector(iconManager)] ? [iconController iconManager] : nil;
+    SBIconListModel *iconModel = [iconManager respondsToSelector:@selector(iconModel)] ? [iconManager iconModel] : nil;
+    if([iconModel respondsToSelector:@selector(layout)]) [iconModel layout];
+    // In order to fix custom widget sizing, refresh only root list views. Dock
+    // geometry is view-owned; changing its model here regressed iOS 15 drags.
     [self updateLayoutForRoot:YES forDock:NO animated:NO];
 }
 
 // Util
 
 - (void)feedbackForButton {
-    // Create a generator (just like in AppStore apps) and make it give feedback
     static UIImpactFeedbackGenerator *generator = nil;
     if(!generator) generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleSoft];
     [generator impactOccurred];
 }
 
 - (void)onSpringboardLaunched {
-    // If floating dock is enabled, default to 6 dock columns. See explanation in init method for why this is done here.
+    // Floating-dock support is safe to query only after SpringBoard launches.
+    // Match upstream Atria by changing the option default at this point.
     if([self boolValueForKey:@"forceFloatingDock"] || [[self class] isUsingFloatingDock]) {
         [self _registerOption:@"dock_columns"
                   translation:@"Columns"
@@ -546,42 +726,119 @@
     }
 
     if([[self class] isUsingFloatingDock]) {
-        // Update floating dock background alpha to fix a bug specific to iOS 14
-        SBFloatingDockController *fdController = [objc_getClass("SBFloatingDockController") _atriaSharedInstance];
-        [[[fdController floatingDockViewController] dockView] _atriaUpdateDockForSettingsChanged];
+        // Floating-dock support is detected after launch, so refresh its background now.
+        SBFloatingDockController *fdController = ARIFloatingDockControllerSharedInstance();
+        SBFloatingDockViewController *fdvc = [fdController respondsToSelector:@selector(floatingDockViewController)]
+            ? [fdController floatingDockViewController]
+            : (SBFloatingDockViewController *)ARISafeValueForKey(fdController, @"_viewController");
+        SBFloatingDockView *dockView = [fdvc respondsToSelector:@selector(dockView)]
+            ? [fdvc dockView]
+            : (SBFloatingDockView *)ARISafeValueForKey(fdvc, @"_dockView");
+        if([dockView respondsToSelector:@selector(_atriaUpdateDockForSettingsChanged)]) {
+            [dockView _atriaUpdateDockForSettingsChanged];
+        }
     }
 }
 
 - (SBRootFolderView *)rootFolderView {
-    return [[[objc_getClass("SBIconController") sharedInstance] _rootFolderController] rootFolderView];
+    id iconController = ARIIconControllerSharedInstance();
+    if([iconController respondsToSelector:@selector(_rootFolderController)]) {
+        id rootFolderController = [iconController _rootFolderController];
+        if([rootFolderController respondsToSelector:@selector(rootFolderView)]) {
+            SBRootFolderView *rootFolderView = [rootFolderController rootFolderView];
+            if(rootFolderView) return rootFolderView;
+        }
+    }
+
+    // Future SpringBoard versions may move ownership again. Fall back to the
+    // live home-screen hierarchy instead of messaging an assumed controller.
+    Class rootFolderViewClass = objc_getClass("SBRootFolderView");
+    UIApplication *application = [UIApplication sharedApplication];
+    for(UIWindow *window in application.windows) {
+        SBRootFolderView *rootFolderView = (SBRootFolderView *)ARIFindSubviewOfClass(window, rootFolderViewClass);
+        if(rootFolderView) return rootFolderView;
+    }
+    return nil;
 }
 
 - (NSArray<SBIconListView *> *)allRootListViews {
-    return [self rootFolderView].iconListViews;
+    SBRootFolderView *rootFolderView = [self rootFolderView];
+    id listViews = [rootFolderView respondsToSelector:@selector(iconListViews)]
+        ? rootFolderView.iconListViews
+        : nil;
+    return [listViews isKindOfClass:[NSArray class]] ? listViews : @[];
+}
+
+- (SBIconListView *)userDockListView {
+    return ARIUserDockListView([self rootFolderView]);
+}
+
+- (void)registerPersistentUserDockListView:(SBIconListView *)listView {
+    if(!listView) return;
+    _persistentUserDockListView = listView;
+}
+
+- (BOOL)isPersistentUserDockModel:(SBIconListModel *)model {
+    if(!model) return NO;
+    // Dock reset validation must never identify suggestions or another
+    // transient list as the persistent user Dock. Read only existing backing
+    // ivars here: the folder's Dock getter is lazy on iOS 15.
+    id folder = ARIExistingObjectIvar(model, "_folder");
+    id folderDock = ARIExistingObjectIvar(folder, "_dock");
+    if(folderDock == model) return YES;
+
+    SBIconListView *listView = _persistentUserDockListView;
+    SBIconListModel *liveModel = [listView respondsToSelector:@selector(model)]
+        ? [listView model]
+        : nil;
+    NSString *liveLocation = [listView.iconLocation isKindOfClass:[NSString class]]
+        ? listView.iconLocation
+        : nil;
+    if(liveLocation.length > 0 &&
+       ![liveLocation isEqualToString:@"SBIconLocationDock"] &&
+       ![liveLocation isEqualToString:@"SBIconLocationFloatingDock"]) {
+        return NO;
+    }
+    return liveModel != nil && liveModel == model;
 }
 
 - (NSUInteger)indexOfListView:(SBIconListView *)target {
+    if(!target) return NSNotFound;
     return [[self allRootListViews] indexOfObject:target];
 }
 
 - (SBIconListView *)firstIconListView {
-    return [[self rootFolderView] firstIconListView];
+    SBRootFolderView *rootFolderView = [self rootFolderView];
+    id listView = [rootFolderView respondsToSelector:@selector(firstIconListView)]
+        ? [rootFolderView firstIconListView]
+        : [self allRootListViews].firstObject;
+    Class listViewClass = objc_getClass("SBIconListView");
+    return [listView isKindOfClass:listViewClass] ? listView : nil;
 }
 
 - (SBIconListView *)currentListView {
-    return [self rootFolderView].currentIconListView;
+    SBRootFolderView *rootFolderView = [self rootFolderView];
+    id listView = nil;
+    if([rootFolderView respondsToSelector:@selector(currentIconListView)]) {
+        listView = [rootFolderView currentIconListView];
+    }
+    if(!listView) listView = [self allRootListViews].firstObject;
+    Class listViewClass = objc_getClass("SBIconListView");
+    return [listView isKindOfClass:listViewClass] ? listView : nil;
 }
 
 // Returns a string which serves as a prefix for per-page layout settings
 
 - (NSString *)prefixForListView:(SBIconListView *)target {
     if(!target || !IconListIsRoot(target)) return @"";
-    return [NSString stringWithFormat:@"Page%d_", (int)[self indexOfListView:target]];
+    NSUInteger index = [self indexOfListView:target];
+    if(index == NSNotFound) return @"";
+    return [NSString stringWithFormat:@"Page%lu_", (unsigned long)index];
 }
 
 // Obtain information about available settings
 
-- (NSMutableOrderedSet<NSString *> *)editorSettingsKeys {
+- (NSOrderedSet<NSString *> *)editorSettingsKeys {
     return _orderedSettingKeys;
 }
 
@@ -589,41 +846,100 @@
     return _optionsRegistry[key];
 }
 
+- (ARIOption *)_optionForPreferenceKey:(NSString *)key {
+    if(![key isKindOfClass:[NSString class]] || key.length == 0) return nil;
+
+    ARIOption *option = _optionsRegistry[key];
+    if(option) return option;
+
+    NSString *baseKey = nil;
+    if(!ARIParsePagePreferenceKey(key, nil, &baseKey) || baseKey.length == 0) return nil;
+    return _optionsRegistry[ARINormalizedPreferenceBaseKey(baseKey)];
+}
+
+- (id)_validatedPreferenceValue:(id)value forKey:(NSString *)key {
+    ARIOption *option = [self _optionForPreferenceKey:key];
+    if(!option) return value;
+
+    id defaultValue = option.defaultValue;
+    if([defaultValue isKindOfClass:[NSNumber class]]) {
+        BOOL defaultIsBoolean = CFGetTypeID((__bridge CFTypeRef)defaultValue) == CFBooleanGetTypeID();
+        if(defaultIsBoolean) {
+            return [value isKindOfClass:[NSNumber class]] ? @([value boolValue]) : defaultValue;
+        }
+
+        if(![value isKindOfClass:[NSNumber class]]) return defaultValue;
+        double number = [value doubleValue];
+        if(!isfinite(number)) number = [defaultValue doubleValue];
+
+        // Runtime meaning must not change merely because the editor's visual
+        // control is switched. Every write path therefore uses the same hard
+        // semantic range; the slider itself still exposes its original range.
+        if(option.hardUpperLimit > option.hardLowerLimit) {
+            number = fmax(option.hardLowerLimit,
+                          fmin(option.hardUpperLimit, number));
+        }
+        if(option.isIntegralValue) {
+            number = round(number);
+        }
+        return @(number);
+    }
+
+    if([defaultValue isKindOfClass:[NSString class]]) {
+        return [value isKindOfClass:[NSString class]] ? value : defaultValue;
+    }
+
+    return value ?: defaultValue;
+}
+
 // Get/set preference values
 
 - (int)intValueForKey:(NSString *)key {
-    return [_preferences objectForKey:key]
-               ? [[_preferences objectForKey:key] integerValue]
-               : [[_optionsRegistry objectForKey:key].defaultValue integerValue];
+    id value = [self rawValueForKey:key];
+    return [value respondsToSelector:@selector(integerValue)] ? (int)[value integerValue] : 0;
 }
 
 - (BOOL)boolValueForKey:(NSString *)key {
-    return [_preferences objectForKey:key]
-               ? [[_preferences objectForKey:key] boolValue]
-               : [[_optionsRegistry objectForKey:key].defaultValue boolValue];
+    id value = [self rawValueForKey:key];
+    return [value respondsToSelector:@selector(boolValue)] ? [value boolValue] : NO;
 }
 
 - (float)floatValueForKey:(NSString *)key {
-    return [_preferences objectForKey:key]
-               ? [[_preferences objectForKey:key] floatValue]
-               : [[_optionsRegistry objectForKey:key].defaultValue floatValue];
+    id value = [self rawValueForKey:key];
+    return [value respondsToSelector:@selector(floatValue)] ? [value floatValue] : 0.0F;
 }
 
 - (id)rawValueForKey:(NSString *)key {
-    return [_preferences objectForKey:key] ?: [_optionsRegistry objectForKey:key].defaultValue;
+    if(![key isKindOfClass:[NSString class]] || key.length == 0) return nil;
+    id value = [_preferences objectForKey:key];
+    if(!value) return [self _optionForPreferenceKey:key].defaultValue;
+    return [self _validatedPreferenceValue:value forKey:key];
 }
 
 - (void)setValue:(id)val forKey:(NSString *)key {
-    if([val isEqual:_optionsRegistry[key].defaultValue]) {
+    if(![key isKindOfClass:[NSString class]] || key.length == 0) return;
+    if(!val) {
+        [self resetValueForKey:key];
+        return;
+    }
+
+    id validatedValue = [self _validatedPreferenceValue:val forKey:key];
+    if(!validatedValue) return;
+
+    // Only global keys remove a value when it equals the default.  A per-page
+    // key must remain explicit or later global edits would silently alter it.
+    ARIOption *directOption = _optionsRegistry[key];
+    if(directOption && [validatedValue isEqual:directOption.defaultValue]) {
         // Matches default value, remove from preferences
         [self resetValueForKey:key];
     } else {
-        if(![val isEqual:[_preferences valueForKey:key]])
-            [_preferences setValue:val forKey:key];
+        if(![validatedValue isEqual:[_preferences objectForKey:key]])
+            [_preferences setObject:validatedValue forKey:key];
     }
 }
 
 - (void)resetValueForKey:(NSString *)key {
+    if(![key isKindOfClass:[NSString class]] || key.length == 0) return;
     [_preferences removeObjectForKey:key];
 }
 
@@ -631,37 +947,48 @@
 // We try to locate value for the current list view, if it exists
 
 - (int)intValueForKey:(NSString *)key forListView:(SBIconListView *)list {
-    NSString *pageKey = [NSString stringWithFormat:@"%@%@", [self prefixForListView:list], key];
-    return [_preferences objectForKey:pageKey] ? [[_preferences objectForKey:pageKey] integerValue] : [self intValueForKey:key];
-}
-
-- (BOOL)boolValueForKey:(NSString *)key forListView:(SBIconListView *)list {
-    NSString *pageKey = [NSString stringWithFormat:@"%@%@", [self prefixForListView:list], key];
-    return [_preferences objectForKey:pageKey] ? [[_preferences objectForKey:pageKey] boolValue] : [self boolValueForKey:key];
+    id value = [self rawValueForKey:key forListView:list];
+    return [value respondsToSelector:@selector(integerValue)] ? (int)[value integerValue] : 0;
 }
 
 - (id)rawValueForKey:(NSString *)key forListView:(SBIconListView *)list {
-    NSString *pageKey = [NSString stringWithFormat:@"%@%@", [self prefixForListView:list], key];
-    return [_preferences objectForKey:pageKey] ?: [self rawValueForKey:key];
+    NSString *prefix = [self prefixForListView:list];
+    if(prefix.length == 0) return [self rawValueForKey:key];
+    BOOL independentPageValue = [key isEqualToString:@"pageLabelText"];
+    if(!independentPageValue) {
+        id storedPerPage = [_preferences objectForKey:@"_perPageListViews"];
+        BOOL hasCustomConfig = [storedPerPage isKindOfClass:[NSArray class]] &&
+            [(NSArray *)storedPerPage containsObject:prefix];
+        if(!hasCustomConfig) return [self rawValueForKey:key];
+    }
+    NSString *pageKey = [prefix stringByAppendingString:key];
+    id value = [_preferences objectForKey:pageKey];
+    return value ? [self _validatedPreferenceValue:value forKey:pageKey] : [self rawValueForKey:key];
 }
 
 - (float)floatValueForKey:(NSString *)key forListView:(SBIconListView *)list {
-    NSString *pageKey = [NSString stringWithFormat:@"%@%@", [self prefixForListView:list], key];
-    return [_preferences objectForKey:pageKey] ? [[_preferences objectForKey:pageKey] floatValue] : [self floatValueForKey:key];
+    id value = [self rawValueForKey:key forListView:list];
+    return [value respondsToSelector:@selector(floatValue)] ? [value floatValue] : 0.0F;
 }
 
 - (void)setValue:(id)val forKey:(NSString *)key forListView:(SBIconListView *)listView {
     if(!listView)
         [self setValue:val forKey:key];
-    else
-        [self setValue:val forKey:[NSString stringWithFormat:@"%@%@", [self prefixForListView:listView], key]];
+    else {
+        NSString *prefix = [self prefixForListView:listView];
+        if(prefix.length == 0) return;
+        [self setValue:val forKey:[prefix stringByAppendingString:key]];
+    }
 }
 
 - (void)resetValueForKey:(NSString *)key forListView:(SBIconListView *)listView {
     if(!listView)
         [self resetValueForKey:key];
-    else
-        [self resetValueForKey:[NSString stringWithFormat:@"%@%@", [self prefixForListView:listView], key]];
+    else {
+        NSString *prefix = [self prefixForListView:listView];
+        if(prefix.length == 0) return;
+        [self resetValueForKey:[prefix stringByAppendingString:key]];
+    }
 }
 
 // Per-page layout creation/deletion and management
@@ -669,12 +996,19 @@
 - (void)deleteCustomForListView:(SBIconListView *)listView {
     // Delete any keys for that list view
     NSString *prefix = [self prefixForListView:listView];
+    if(prefix.length == 0) return;
     NSDictionary *preferences = [_preferences dictionaryRepresentation];
+    NSString *pageLabelKey = [prefix stringByAppendingString:@"pageLabelText"];
     for(NSString *key in [preferences allKeys]) {
-        if([key hasPrefix:prefix]) [self resetValueForKey:key];
+        if([key hasPrefix:prefix] && ![key isEqualToString:pageLabelKey]) {
+            [self resetValueForKey:key];
+        }
     }
 
-    NSMutableArray *perPage = [(NSArray *)[self rawValueForKey:@"_perPageListViews"] mutableCopy] ?: [NSMutableArray new];
+    id storedPerPage = [self rawValueForKey:@"_perPageListViews"];
+    NSMutableArray *perPage = [storedPerPage isKindOfClass:[NSArray class]]
+        ? [storedPerPage mutableCopy]
+        : [NSMutableArray new];
     [perPage removeObject:prefix];
     [self setValue:perPage forKey:@"_perPageListViews"];
 
@@ -684,9 +1018,13 @@
 - (void)createCustomForListView:(SBIconListView *)listView {
     // Freeze list view settings to what the current global config is
     NSString *prefix = [self prefixForListView:listView];
+    if(prefix.length == 0) return;
 
-    NSMutableArray *perPage = [(NSArray *)[self rawValueForKey:@"_perPageListViews"] mutableCopy] ?: [NSMutableArray new];
-    [perPage addObject:prefix];
+    id storedPerPage = [self rawValueForKey:@"_perPageListViews"];
+    NSMutableArray *perPage = [storedPerPage isKindOfClass:[NSArray class]]
+        ? [storedPerPage mutableCopy]
+        : [NSMutableArray new];
+    if(![perPage containsObject:prefix]) [perPage addObject:prefix];
     [self setValue:perPage forKey:@"_perPageListViews"];
 
     for(NSString *key in _orderedSettingKeys) {
@@ -697,28 +1035,64 @@
 }
 
 - (BOOL)doesCustomConfigForListViewExist:(SBIconListView *)listView {
+    NSString *prefix = [self prefixForListView:listView];
+    if(prefix.length == 0) return NO;
     NSArray *perPage = [self rawValueForKey:@"_perPageListViews"];
-    if(!perPage) return NO;
-    return [perPage containsObject:[self prefixForListView:listView]];
+    if(![perPage isKindOfClass:[NSArray class]]) return NO;
+    return [perPage containsObject:prefix];
 }
 
 + (UIInterfaceOrientation)currentDeviceOrientation {
-    return [[[UIApplication sharedApplication] windows] firstObject].windowScene.interfaceOrientation;
+    static UIInterfaceOrientation lastKnownOrientation = UIInterfaceOrientationPortrait;
+    UIApplication *application = [UIApplication sharedApplication];
+    UIWindowScene *scene = [ARITweakManager sharedInstance].rootFolderView.window.windowScene;
+
+    if(!scene) {
+        for(UIScene *candidate in application.connectedScenes) {
+            if(![candidate isKindOfClass:[UIWindowScene class]]) continue;
+            if(candidate.activationState == UISceneActivationStateForegroundActive) {
+                scene = (UIWindowScene *)candidate;
+                break;
+            }
+        }
+    }
+
+    if(!scene) {
+        for(UIWindow *window in application.windows) {
+            if(window.isKeyWindow && window.windowScene) {
+                scene = window.windowScene;
+                break;
+            }
+        }
+    }
+
+    UIInterfaceOrientation orientation = scene.interfaceOrientation;
+    if(orientation != UIInterfaceOrientationUnknown) lastKnownOrientation = orientation;
+    return lastKnownOrientation;
 }
 
 + (BOOL)isUsingFloatingDock {
-    return [objc_getClass("SBFloatingDockController") isFloatingDockSupported];
+    Class controllerClass = objc_getClass("SBFloatingDockController");
+    return [controllerClass respondsToSelector:@selector(isFloatingDockSupported)]
+        ? [controllerClass isFloatingDockSupported]
+        : NO;
 }
 
 + (void)dismissFloatingDockIfPossible {
     if([self isUsingFloatingDock]) {
-        [[objc_getClass("SBFloatingDockController") _atriaSharedInstance] _dismissFloatingDockIfPresentedAnimated:YES completionHandler:nil];
+        SBFloatingDockController *controller = ARIFloatingDockControllerSharedInstance();
+        if([controller respondsToSelector:@selector(_dismissFloatingDockIfPresentedAnimated:completionHandler:)]) {
+            [controller _dismissFloatingDockIfPresentedAnimated:YES completionHandler:nil];
+        }
     }
 }
 
 + (void)presentFloatingDockIfPossible {
     if([self isUsingFloatingDock]) {
-        [[objc_getClass("SBFloatingDockController") _atriaSharedInstance] _presentFloatingDockIfDismissedAnimated:YES completionHandler:nil];
+        SBFloatingDockController *controller = ARIFloatingDockControllerSharedInstance();
+        if([controller respondsToSelector:@selector(_presentFloatingDockIfDismissedAnimated:completionHandler:)]) {
+            [controller _presentFloatingDockIfDismissedAnimated:YES completionHandler:nil];
+        }
     }
 }
 

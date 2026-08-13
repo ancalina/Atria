@@ -18,7 +18,6 @@ extern NSString *const ARICustomGreetingTokensPreferenceKey;
 + (NSString *)newTokenIdentifier;
 + (NSString *)tokenNameForDictionary:(NSDictionary *)token fallback:(NSString *)fallback;
 + (NSString *)formattedTimeValue:(double)value;
-+ (NSString *)displayTextForEntry:(NSDictionary *)entry;
 @end
 
 NS_ASSUME_NONNULL_END

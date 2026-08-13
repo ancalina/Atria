@@ -5,12 +5,13 @@
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#include <stdint.h>
 
 #import "../Options/ARIOption.h"
 
 typedef struct SBHIconGridSize {
-    short width;
-    short height;
+    uint16_t width;
+    uint16_t height;
 } SBHIconGridSize;
 
 // This is the struct definition for iOS 14-15
@@ -27,22 +28,7 @@ typedef struct SBHIconGridSizeClassSizes {
     struct SBHIconGridSize extraLarge;
 } SBHIconGridSizeClassSizes;
 
-typedef struct SBRootFolderViewMetrics {
-    struct CGRect _field1;
-    struct CGRect _field2;
-    struct CGRect _field3;
-    struct CGRect _field4;
-    struct CGRect _field5;
-    struct CGRect _field6;
-    struct CGRect _field7;
-    double _field8;
-    struct CGRect _field9;
-    struct CGRect _field10;
-    struct CGRect _field11;
-} SBRootFolderViewMetrics;
-
 @interface SBIcon : NSObject
-- (NSUInteger)gridSizeClass;
 - (id)application;
 @end
 
@@ -58,11 +44,12 @@ typedef struct SBRootFolderViewMetrics {
 - (SBIconListView *)_atriaListView;
 - (void)_atriaUpdateModelGridSizes;
 - (struct SBHIconGridSize)gridSize;
-- (struct SBHIconGridSizeClassSizes)iconGridSizeClassSizes;          // iOS 14
-- (struct SBHIconGridSize)gridSizeForGridSizeClass:(NSUInteger)arg1; // iOS 15+
+- (void)setGridSize:(struct SBHIconGridSize)gridSize;
 - (NSUInteger)maxNumberOfIcons;
 - (NSArray *)icons;
 - (void)layout;
+- (id)gridCellInfoForGridSize:(struct SBHIconGridSize)gridSize
+                       options:(NSUInteger)options;
 @end
 
 @class SBSApplicationShortcutItem;
@@ -86,7 +73,6 @@ typedef struct SBRootFolderViewMetrics {
 @end
 
 @interface SBIconListGridLayoutConfiguration : NSObject
-@property (nonatomic, readwrite, assign) struct SBHIconGridSizeClassSizes iconGridSizeClassSizes;
 @property (nonatomic, readwrite, assign) NSUInteger numberOfPortraitColumns;
 @property (nonatomic, readwrite, assign) NSUInteger numberOfPortraitRows;
 @property (nonatomic, readwrite, assign) NSUInteger numberOfLandscapeColumns;
@@ -103,18 +89,18 @@ typedef struct SBRootFolderViewMetrics {
 @interface SBIconListViewLayoutMetrics : NSObject
 @property (nonatomic, assign) UIEdgeInsets iconInsets;
 @property (nonatomic, assign) CGSize alignmentIconSize;
+@property (nonatomic, assign) CGFloat iconContentScale;
 @end
 
 @class SBIcon;
 @class ARILabelView;
 @class ARIBackgroundView;
 @interface SBIconListView : UIView
-@property (nonatomic, assign, getter=isEditing, nonatomic) BOOL editing;
+@property (nonatomic, assign, getter=isEditing) BOOL editing;
 @property (nonatomic, strong) NSString *iconLocation;
 @property (nonatomic, assign) SBIconListFlowExtendedLayout *layout;
 @property (nonatomic, assign) CGFloat iconContentScale;
-@property (nonatomic, assign) UIEdgeInsets additionalLayoutInsets; // iOS 14+
-@property (nonatomic, assign) UIEdgeInsets layoutInsets;           // iOS 13
+@property (nonatomic, assign) UIEdgeInsets additionalLayoutInsets;
 
 @property (nonatomic, strong) ARILabelView *_atriaPageLabel;
 @property (nonatomic, strong) ARIBackgroundView *_atriaBackground;
@@ -130,21 +116,24 @@ typedef struct SBRootFolderViewMetrics {
 - (SBIcon *)iconAtCoordinate:(struct SBIconCoordinate)co metrics:(id)metrics;
 - (struct SBIconCoordinate)coordinateForIcon:(id)icon;
 - (CGPoint)originForIconAtCoordinate:(struct SBIconCoordinate)co metrics:(id)metrics;
+- (CGPoint)_alignedIconPointForPoint:(CGPoint)point;
 - (CGPoint)centerForIconCoordinate:(struct SBIconCoordinate)co metrics:(id)metrics;
-- (CGSize)iconImageSizeForGridSizeClass:(NSUInteger)size;
+- (CGRect)rectForDefaultSizedCellsOfSize:(struct SBHIconGridSize)size
+				   startingAtCoordinate:(struct SBIconCoordinate)coordinate
+				   metrics:(id)metrics;
 - (CGSize)effectiveIconSpacing;
 - (SBIconListModel *)model;
-- (struct SBHIconGridSize)iconGridSizeForClass:(NSUInteger)cls;
 - (void)setVisibleColumnRange:(NSRange)range;
 - (void)setVisibleRowRange:(NSRange)range;
 - (void)layoutIconsNow;
+- (void)layoutIconsIfNeeded;
 @end
 
 @interface SBRootFolderView : UIView
 @property (nonatomic, readonly, strong) NSArray<SBIconListView *> *iconListViews;
 @property (nonatomic, strong) UIView *pageControl; // SBIconListPageControl
 @property (nonatomic, strong) UIView *scrollAccessoryView;
-- (void)layoutPageControlWithMetrics:(const struct SBRootFolderViewMetrics *)metrics;
+- (void)_atriaApplyPageControlOffset;
 - (SBIconListView *)currentIconListView;
 - (SBIconListView *)firstIconListView;
 - (SBDockView *)dockView;
@@ -182,7 +171,8 @@ typedef struct SBRootFolderViewMetrics {
 + (SBFloatingDockController *)_atriaSharedInstance;
 @end
 
-@interface SBIconController : UIViewController
+// UIViewController through iOS 16; a controller/coordinator object on iOS 17+.
+@interface SBIconController : NSObject
 - (SBFloatingDockController *)floatingDockController; // iOS 13-15 only (does not exist on 16)
 - (SBRootFolderController *)_rootFolderController;
 - (SBHIconManager *)iconManager;
@@ -193,10 +183,8 @@ typedef struct SBRootFolderViewMetrics {
 @property (nonatomic, readonly, assign, getter=isEnabled) BOOL enabled;
 @property (nonatomic, readonly, strong) NSUserDefaults *preferences;
 @property (nonatomic, readonly, strong) NSMapTable *listViewModelMap;
-@property (nonatomic, readonly, assign) NSUInteger firmwareVersion;
 @property (nonatomic, readonly, assign, getter=isDeviceIPad) BOOL deviceIPad;
 @property (nonatomic, readonly, assign, getter=isShyLabelsInstalled) BOOL shyLabelsInstalled;
-@property (nonatomic, readonly, assign, getter=isGriddyInstalled) BOOL griddyInstalled;
 - (void)updateLayoutForEditing:(BOOL)animated;
 - (void)updateLayoutForRoot:(BOOL)forRoot forDock:(BOOL)forDock animated:(BOOL)animated;
 - (void)relayoutEntireIconModel;
@@ -205,12 +193,15 @@ typedef struct SBRootFolderViewMetrics {
 - (NSUInteger)indexOfListView:(SBIconListView *)target;
 - (SBRootFolderView *)rootFolderView;
 - (NSArray<SBIconListView *> *)allRootListViews;
+- (SBIconListView *)userDockListView;
+- (void)registerPersistentUserDockListView:(SBIconListView *)listView;
+- (BOOL)isPersistentUserDockModel:(SBIconListModel *)model;
 - (NSString *)prefixForListView:(SBIconListView *)target;
 - (SBIconListView *)currentListView;
 - (SBIconListView *)firstIconListView;
 
 // Obtain information about available settings
-- (NSArray<NSString *> *)editorSettingsKeys;
+- (NSOrderedSet<NSString *> *)editorSettingsKeys;
 - (ARIOption *)getSettingByKey:(NSString *)key;
 
 // Get/set preference values
@@ -223,7 +214,6 @@ typedef struct SBRootFolderViewMetrics {
 
 // Get/set preference values by icon list view
 - (int)intValueForKey:(NSString *)key forListView:(SBIconListView *)list;
-- (BOOL)boolValueForKey:(NSString *)key forListView:(SBIconListView *)list;
 - (id)rawValueForKey:(NSString *)key forListView:(SBIconListView *)list;
 - (float)floatValueForKey:(NSString *)key forListView:(SBIconListView *)list;
 - (void)setValue:(id)val forKey:(NSString *)key forListView:(SBIconListView *)listView;

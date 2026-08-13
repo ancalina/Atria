@@ -19,6 +19,10 @@ static NSString *const ARILabelFontModeBundle = @"bundle";
 static NSString *const ARILabelFontModeImported = @"imported";
 static NSString *const ARILabelFontModeNamed = @"named";
 
+@interface ARILabelView ()
++ (CTFontDescriptorRef)getCustomFontDescriptorOrNull;
+@end
+
 @implementation ARILabelView {
     NSString *_rawText;
     NSLayoutConstraint *_labelTopAnchor;
@@ -136,14 +140,15 @@ static NSString *const ARILabelFontModeNamed = @"named";
     _textField.textColor = [[self class] colorFromHexString:[manager rawValueForKey:@"labelTextColor"] withAlpha:1.0F];
 
     // Text shadow
-    if([manager boolValueForKey:@"pageLabelShadow"] && _textField.layer.shadowOpacity == 0.0) {
+    BOOL shadowEnabled = [manager boolValueForKey:@"pageLabelShadow"];
+    if(shadowEnabled && _textField.layer.shadowOpacity == 0.0) {
         _textField.layer.shadowOpacity = 0.5F;
         _textField.layer.shadowRadius = 5.0F;
         _textField.layer.shadowColor = [UIColor blackColor].CGColor;
         _textField.layer.shadowOffset = CGSizeZero;
         _textField.layer.shouldRasterize = YES;
         _textField.layer.rasterizationScale = UIScreen.mainScreen.scale;
-    } else if(![manager boolValueForKey:@"pageLabelShadow"] && _textField.layer.shadowOpacity > 0.0) {
+    } else if(!shadowEnabled && _textField.layer.shadowOpacity > 0.0) {
         _textField.layer.shadowOpacity = 0.0F;
         _textField.layer.shadowRadius = 0.0F;
     }
@@ -265,9 +270,9 @@ static NSString *const ARILabelFontModeNamed = @"named";
 
         NSData *fileData = fontPath.length > 0 ? [NSData dataWithContentsOfFile:fontPath] : nil;
         if(fileData) {
-            cfdesc = CTFontManagerCreateFontDescriptorFromData((CFDataRef)fileData);
+            cfdesc = CTFontManagerCreateFontDescriptorFromData((__bridge CFDataRef)fileData);
         } else if(fontName.length > 0) {
-            CTFontRef ctfont = CTFontCreateWithName((CFStringRef)fontName, 17.0, nil);
+            CTFontRef ctfont = CTFontCreateWithName((__bridge CFStringRef)fontName, 17.0, nil);
             if(ctfont != NULL) {
                 cfdesc = CTFontCopyFontDescriptor(ctfont);
                 CFRelease(ctfont);

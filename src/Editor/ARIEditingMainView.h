@@ -10,7 +10,6 @@
 
 @interface ARIEditingMainView : UIView
 @property (nonatomic, readonly, strong) NSMutableArray *validsettingsForTarget;
-@property (nonatomic, strong) UIVisualEffectView *matEffect;
 @property (nonatomic, strong) ARIEditingControlsView *currentControls;
 @property (nonatomic, strong) UILabel *currentSettingLabel;
 @property (nonatomic, strong) UILabel *perPageIndicator;
@@ -21,6 +20,7 @@
 - (void)closeButtonTapped:(UITapGestureRecognizer *)tap;
 - (void)resetSetting:(UITapGestureRecognizer *)tap;
 - (void)toggleOptionsView:(UITapGestureRecognizer *)tap;
+- (void)showInitialOptionsIfNeeded;
 - (void)handePerPageTap:(UITapGestureRecognizer *)tap;
 - (void)updateIsSingleListView;
 @end

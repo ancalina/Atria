@@ -5,7 +5,8 @@
 
 #import <UIKit/UIKit.h>
 
-@interface ARISettingCollectionViewHost : UIView
-@property (nonatomic, strong) UICollectionView *collectionView;
-- (void)setupGradient;
+@class ARIEditingMainView;
+
+@interface ARISettingCollectionViewHost : UIView <UICollectionViewDelegate, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout>
+- (instancetype)initWithEditor:(ARIEditingMainView *)editor;
 @end

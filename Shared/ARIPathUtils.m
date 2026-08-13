@@ -2,7 +2,38 @@
 
 #include <dlfcn.h>
 
+// Theos ships both compatibility headers, so header availability does not
+// identify the package scheme.  Select the mapper from the scheme define that
+// Theos adds to every compile instead; otherwise a RootHide binary can retain
+// inactive /var/jb fallbacks from the rootless compatibility path.
+#if defined(THEOS_PACKAGE_SCHEME_ROOTHIDE)
+#include <roothide.h>
+#define ARI_HAS_ROOTHIDE_PATH_API 1
+#elif defined(THEOS_PACKAGE_SCHEME_ROOTLESS)
+#include <rootless.h>
+#define ARI_HAS_ROOTLESS_PATH_API 1
+#endif
+
+#ifndef THEOS_PACKAGE_INSTALL_PREFIX
+#define THEOS_PACKAGE_INSTALL_PREFIX ""
+#endif
+
 static NSString *ARIPathUtilsPreferenceBundlePathUncached(void);
+
+static NSString *ARIPathUtilsMappedJBRootPath(NSString *rootRelativePath) {
+    if(![rootRelativePath isKindOfClass:[NSString class]] || rootRelativePath.length == 0) return nil;
+
+#if defined(ARI_HAS_ROOTHIDE_PATH_API)
+    return jbroot(rootRelativePath);
+#elif defined(ARI_HAS_ROOTLESS_PATH_API)
+    return ROOT_PATH_NS_VAR(rootRelativePath);
+#else
+    NSString *installPrefix = @THEOS_PACKAGE_INSTALL_PREFIX;
+    return installPrefix.length > 0
+        ? [installPrefix stringByAppendingString:rootRelativePath]
+        : rootRelativePath;
+#endif
+}
 
 static NSString *ARIPathUtilsJBRootPathForDirectory(NSString *directoryPath) {
     if(![directoryPath isKindOfClass:[NSString class]] || directoryPath.length == 0) return nil;
@@ -30,12 +61,20 @@ static NSArray<NSString *> *ARIPathUtilsPreferenceBundleCandidates(void) {
         }
     }
 
+    NSString *mappedBundlePath = ARIPathUtilsMappedJBRootPath(@"/Library/PreferenceBundles/AtriaPrefs.bundle");
+    if(mappedBundlePath.length > 0) {
+        [paths addObject:mappedBundlePath];
+    }
+
     NSString *installPrefix = @THEOS_PACKAGE_INSTALL_PREFIX;
     if([installPrefix isKindOfClass:[NSString class]] && installPrefix.length > 0) {
         [paths addObject:[installPrefix stringByAppendingString:@"/Library/PreferenceBundles/AtriaPrefs.bundle"]];
     }
 
+#if defined(THEOS_PACKAGE_SCHEME_ROOTLESS)
+    // Retain the conventional v1 rootless fallback only in rootless builds.
     [paths addObject:@"/var/jb/Library/PreferenceBundles/AtriaPrefs.bundle"];
+#endif
     [paths addObject:@"/Library/PreferenceBundles/AtriaPrefs.bundle"];
     return paths.array;
 }
@@ -48,6 +87,11 @@ static NSArray<NSString *> *ARIJBRootCandidatePaths(NSString *rootRelativePath) 
         : [@"/" stringByAppendingString:rootRelativePath];
     NSMutableOrderedSet<NSString *> *paths = [NSMutableOrderedSet orderedSet];
     NSFileManager *fileManager = [NSFileManager defaultManager];
+
+    NSString *mappedPath = ARIPathUtilsMappedJBRootPath(normalizedPath);
+    if(mappedPath.length > 0) {
+        [paths addObject:mappedPath];
+    }
 
     Dl_info info = {0};
     if(dladdr((const void *)&ARIExistingJBRootPath, &info) && info.dli_fname) {
@@ -71,8 +115,10 @@ static NSArray<NSString *> *ARIJBRootCandidatePaths(NSString *rootRelativePath) 
         [paths addObject:[installPrefix stringByAppendingString:normalizedPath]];
     }
 
+#if defined(THEOS_PACKAGE_SCHEME_ROOTLESS)
     NSString *varJBPath = [@"/var/jb" stringByAppendingString:normalizedPath];
     [paths addObject:varJBPath];
+#endif
     [paths addObject:normalizedPath];
 
     NSMutableArray<NSString *> *existingPaths = [NSMutableArray array];
@@ -118,7 +164,11 @@ NSString *ARIPreferenceBundleResourcePath(NSString *name, NSString *extension, N
     NSString *bundlePath = ARIPreferenceBundlePath();
     if(bundlePath.length == 0) return nil;
 
-    NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
+    static NSBundle *bundle;
+    static dispatch_once_t bundleOnceToken;
+    dispatch_once(&bundleOnceToken, ^{
+        bundle = [NSBundle bundleWithPath:bundlePath];
+    });
     NSArray<NSString *> *candidateNames = @[
         name,
         [name stringByReplacingOccurrencesOfString:@" " withString:@"_"]
